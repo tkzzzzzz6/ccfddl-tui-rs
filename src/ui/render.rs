@@ -4,22 +4,30 @@
 //! DataTable filling the rest, with the header above and the footer below.
 
 use chrono::{DateTime, Utc};
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
-use ratatui::Frame;
 
 use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
-use super::app::{App, Focus, Language, SidebarItem, SIDEBAR_WIDTH};
+use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem};
 use super::theme;
 
 /// Column headers, in the order of `ConferenceTable.add_columns`.
 pub const COLUMNS: [&str; 9] = [
-    "★", "Title", "Sub", "CCF", "CORE", "THCPL", "Countdown", "Date", "Place",
+    "★",
+    "Title",
+    "Sub",
+    "CCF",
+    "CORE",
+    "THCPL",
+    "Countdown",
+    "Date",
+    "Place",
 ];
 
 /// Draw the whole UI for the current frame.
@@ -61,14 +69,20 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let title = app.language.title();
 
     let mut spans = vec![
-        Span::styled(format!(" {title} "), theme::HEADER_STYLE.add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" {title} "),
+            theme::HEADER_STYLE.add_modifier(Modifier::BOLD),
+        ),
         Span::styled(format!(" {subtitle}"), theme::HEADER_STYLE),
     ];
     if let Some(status) = &app.status {
         spans.push(Span::styled(format!("  |  {status}"), theme::HEADER_STYLE));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)).style(theme::HEADER_STYLE), area);
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(theme::HEADER_STYLE),
+        area,
+    );
 }
 
 fn render_body(frame: &mut Frame, app: &mut App, area: Rect, now: DateTime<Utc>) {
@@ -97,7 +111,10 @@ fn sidebar_line(app: &App, item: &SidebarItem) -> Line<'static> {
         }
         SidebarItem::CcfRank(rank) => Line::from(vec![
             Span::styled(checkbox(app.is_ccf_rank_enabled(rank)), theme::TEXT),
-            Span::styled(format!("CCF {rank}"), Style::new().fg(theme::ccf_rank_color(rank))),
+            Span::styled(
+                format!("CCF {rank}"),
+                Style::new().fg(theme::ccf_rank_color(rank)),
+            ),
         ]),
         SidebarItem::CoreRank(rank) => Line::from(vec![
             Span::styled(checkbox(app.is_core_rank_enabled(rank)), theme::TEXT),
@@ -118,19 +135,19 @@ fn sidebar_line(app: &App, item: &SidebarItem) -> Line<'static> {
             Span::raw("Show Expired"),
         ]),
         SidebarItem::Search => {
-                    // The caret only shows while the field has focus.
-                    let caret = if app.focus == Focus::Search { "_" } else { "" };
-                    let line = Line::from(vec![
-                        Span::styled("> ", theme::DIM),
-                        Span::styled(app.search_input.clone(), theme::SEARCH_STYLE),
-                        Span::styled(caret.to_string(), theme::DIM),
-                    ]);
-                    if app.focus == Focus::Search {
-                        line.style(theme::SELECTED_STYLE)
-                    } else {
-                        line
-                    }
-                }
+            // The caret only shows while the field has focus.
+            let caret = if app.focus == Focus::Search { "_" } else { "" };
+            let line = Line::from(vec![
+                Span::styled("> ", theme::DIM),
+                Span::styled(app.search_input.clone(), theme::SEARCH_STYLE),
+                Span::styled(caret.to_string(), theme::DIM),
+            ]);
+            if app.focus == Focus::Search {
+                line.style(theme::SELECTED_STYLE)
+            } else {
+                line
+            }
+        }
     }
 }
 
@@ -148,38 +165,37 @@ fn render_sidebar(frame: &mut Frame, app: &App, area: Rect) {
     let items = app.sidebar_items();
     let inner_height = area.height.saturating_sub(2) as usize;
     // Keep the highlighted control visible when the sidebar overflows.
-        let controls = app.sidebar_controls();
-        let cursor_item = controls.get(app.sidebar_cursor);
-        let cursor_index = items
-            .iter()
-            .position(|item| Some(item) == cursor_item)
-            .unwrap_or(0);
-        let offset = cursor_index.saturating_sub(inner_height.saturating_sub(1));
+    let controls = app.sidebar_controls();
+    let cursor_item = controls.get(app.sidebar_cursor);
+    let cursor_index = items
+        .iter()
+        .position(|item| Some(item) == cursor_item)
+        .unwrap_or(0);
+    let offset = cursor_index.saturating_sub(inner_height.saturating_sub(1));
 
-        let focused = app.focus == Focus::Sidebar;
-        let lines: Vec<Line> = items
-            .iter()
-            .enumerate()
-            .skip(offset)
-            .take(inner_height.max(1))
-            .map(|(index, item)| {
-                let line = sidebar_line(app, item);
-                if focused && index == cursor_index {
-                    line.style(theme::SELECTED_STYLE)
-                } else {
-                    line
-                }
-            })
-            .collect();
+    let focused = app.focus == Focus::Sidebar;
+    let lines: Vec<Line> = items
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(inner_height.max(1))
+        .map(|(index, item)| {
+            let line = sidebar_line(app, item);
+            if focused && index == cursor_index {
+                line.style(theme::SELECTED_STYLE)
+            } else {
+                line
+            }
+        })
+        .collect();
 
     frame.render_widget(
-        Paragraph::new(lines)
-            .style(theme::SIDEBAR_STYLE)
-            .block(Block::default().borders(Borders::ALL).title(Span::styled(
-                format!(" {title} "),
-                theme::TITLE_STYLE,
-            ))
-            .border_style(border)),
+        Paragraph::new(lines).style(theme::SIDEBAR_STYLE).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE))
+                .border_style(border),
+        ),
         area,
     );
 }
@@ -231,12 +247,44 @@ fn row_cells(row: &ConferenceRow, now: DateTime<Utc>) -> Vec<Cell<'static>> {
             theme::countdown_style(countdown.color),
         ))),
         Cell::from(row.date.clone()),
-        Cell::from(Line::from(Span::styled(row.place.clone(), theme::PLACE_STYLE))),
+        Cell::from(Line::from(Span::styled(
+            row.place.clone(),
+            theme::PLACE_STYLE,
+        ))),
     ]
 }
 
+/// Column headers, with the active sort column marked by an arrow.
+fn header_cells(app: &App) -> Vec<Cell<'static>> {
+    let marker = |header: &str| -> Option<char> {
+        match app.sort_column.header() {
+            "" => None,
+            active if active == header => Some(if app.sort_reverse { '▼' } else { '▲' }),
+            _ => None,
+        }
+    };
+
+    COLUMNS
+        .iter()
+        .map(|column| {
+            let style = if marker(column).is_some() {
+                theme::TITLE_STYLE
+            } else {
+                theme::SECTION_STYLE
+            };
+            match marker(column) {
+                Some(arrow) => Cell::from(Line::from(vec![
+                    Span::styled(format!("{column} "), style),
+                    Span::styled(arrow.to_string(), style),
+                ])),
+                None => Cell::from(Span::styled(*column, style)),
+            }
+        })
+        .collect()
+}
+
 fn render_table(frame: &mut Frame, app: &App, area: Rect, now: DateTime<Utc>) {
-    let header = Row::new(COLUMNS.iter().map(|c| Cell::from(*c))).style(theme::SECTION_STYLE);
+    let header = Row::new(header_cells(app)).style(theme::SECTION_STYLE);
 
     let rows: Vec<Row> = app
         .visible
@@ -268,12 +316,12 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect, now: DateTime<Utc>) {
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     let keys: &[(&str, &str)] = match app.focus {
-            Focus::Search => &[
-                ("Type", "Search titles"),
-                ("Enter", "Apply"),
-                ("Esc", "Clear"),
-            ],
-            Focus::Sidebar => &[
+        Focus::Search => &[
+            ("Type", "Search titles"),
+            ("Enter", "Apply"),
+            ("Esc", "Clear"),
+        ],
+        Focus::Sidebar => &[
             ("↑↓", "Move"),
             ("Space", "Toggle"),
             ("Tab", "Table"),
@@ -285,7 +333,9 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         Focus::Table => &[
             ("j/k", "Move"),
             ("g/G", "Ends"),
+            ("⏎", "Open"),
             ("f", "Favorite"),
+            ("s", "Sort"),
             ("Tab", "Filters"),
             ("l", "Language"),
             ("r", "Refresh"),
@@ -306,21 +356,49 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 /// The `?` overlay, ported from `HelpScreen`.
 fn render_help(frame: &mut Frame, area: Rect) {
     let sections: [(&str, &[(&str, &str)]); 3] = [
-        ("Navigation", &[("j/k", "Move up/down"), ("g / G", "First / last row")]),
-        ("Actions", &[("Enter", "Open conference URL"), ("f", "Toggle favorite"),
-                      ("l", "Toggle language"), ("r", "Refresh data"), ("q", "Quit")]),
-            ("Filter", &[("Tab", "Focus sidebar"), ("/", "Search titles"),
-                         ("Space", "Toggle checkbox"), ("Esc", "Reset filters")]),
+        (
+            "Navigation",
+            &[("j/k", "Move up/down"), ("g / G", "First / last row")],
+        ),
+        (
+            "Actions",
+            &[
+                ("Enter", "Open conference URL"),
+                ("f", "Toggle favorite"),
+                ("s", "Cycle sort column"),
+                ("S", "Reverse sort"),
+                ("l", "Toggle language"),
+                ("r", "Refresh data"),
+                ("q", "Quit"),
+            ],
+        ),
+        (
+            "Filter",
+            &[
+                ("Tab", "Focus sidebar"),
+                ("/", "Search titles"),
+                ("Space", "Toggle checkbox"),
+                ("Esc", "Reset filters"),
+            ],
+        ),
     ];
 
-        // Title + per-section (blank, heading, rows) + blank + closing hint, plus
-        // the two rows the border takes.
-        let content = 1 + sections.iter().map(|(_, rows)| rows.len() + 2).sum::<usize>() + 2;
-        let height = (content + 2) as u16;
-        let width = 52.min(area.width.saturating_sub(2));
+    // Title + per-section (blank, heading, rows) + blank + closing hint, plus
+    // the two rows the border takes.
+    let content = 1
+        + sections
+            .iter()
+            .map(|(_, rows)| rows.len() + 2)
+            .sum::<usize>()
+        + 2;
+    let height = (content + 2) as u16;
+    let width = 52.min(area.width.saturating_sub(2));
     let popup = centered(area, width, height.min(area.height.saturating_sub(2)));
 
-    let mut lines: Vec<Line> = vec![Line::from(Span::styled("Keyboard Shortcuts", theme::TITLE_STYLE))];
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+        "Keyboard Shortcuts",
+        theme::TITLE_STYLE,
+    ))];
     for (title, rows) in sections {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(title, theme::SECTION_STYLE)));
@@ -332,23 +410,26 @@ fn render_help(frame: &mut Frame, area: Rect) {
         }
     }
     lines.push(Line::default());
-    lines.push(Line::from(Span::styled("Press ? or Esc to close", theme::DIM)));
+    lines.push(Line::from(Span::styled(
+        "Press ? or Esc to close",
+        theme::DIM,
+    )));
 
     // Clear first so the table underneath does not show through the popup.
-        frame.render_widget(Clear, popup);
-        frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .style(theme::BASE.bg(theme::SURFACE))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(theme::DIM)
-                        .style(theme::BASE.bg(theme::SURFACE))
-                        .title(Span::styled(" Help ", theme::TITLE_STYLE)),
-                ),
-            popup,
-        );
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .style(theme::BASE.bg(theme::SURFACE))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(theme::DIM)
+                    .style(theme::BASE.bg(theme::SURFACE))
+                    .title(Span::styled(" Help ", theme::TITLE_STYLE)),
+            ),
+        popup,
+    );
 }
 
 /// A `width` x `height` rectangle centred inside `area`.
@@ -369,8 +450,8 @@ mod tests {
     use crate::data::{DataError, DataService, Favorites};
     use crate::ui::app::App;
     use chrono::TimeZone;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     const YAML: &str = "
 - title: CVPR
@@ -428,17 +509,17 @@ mod tests {
         lines.iter().any(|line| line.contains(needle))
     }
 
-        /// Like [`contains`], but ignores the padding spaces that the terminal
-        /// inserts after double-width glyphs (CJK text occupies two cells).
-        fn contains_compact(lines: &[String], needle: &str) -> bool {
-            let compact: String = lines
-                .iter()
-                .flat_map(|line| line.chars())
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            let needle: String = needle.chars().filter(|c| !c.is_whitespace()).collect();
-            compact.contains(&needle)
-        }
+    /// Like [`contains`], but ignores the padding spaces that the terminal
+    /// inserts after double-width glyphs (CJK text occupies two cells).
+    fn contains_compact(lines: &[String], needle: &str) -> bool {
+        let compact: String = lines
+            .iter()
+            .flat_map(|line| line.chars())
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let needle: String = needle.chars().filter(|c| !c.is_whitespace()).collect();
+        compact.contains(&needle)
+    }
 
     #[test]
     fn draws_header_table_and_footer() {
@@ -449,7 +530,10 @@ mod tests {
         assert!(contains(&lines, "Showing 2 of 2 conferences"), "{lines:?}");
         // Every column header is present.
         for column in COLUMNS {
-            assert!(contains(&lines, column), "missing column {column}: {lines:?}");
+            assert!(
+                contains(&lines, column),
+                "missing column {column}: {lines:?}"
+            );
         }
         // Rows are rendered with title + year.
         assert!(contains(&lines, "CVPR 2030"), "{lines:?}");
@@ -502,9 +586,12 @@ mod tests {
         let mut app = app();
         app.toggle_language();
         let lines = render(&mut app, 120, 30);
-            assert!(contains_compact(&lines, "CCF-Deadlines 终端界面"), "{lines:?}");
-            assert!(contains_compact(&lines, "显示 2 / 2 个会议"), "{lines:?}");
-            assert!(contains_compact(&lines, "筛选"), "{lines:?}");
+        assert!(
+            contains_compact(&lines, "CCF-Deadlines 终端界面"),
+            "{lines:?}"
+        );
+        assert!(contains_compact(&lines, "显示 2 / 2 个会议"), "{lines:?}");
+        assert!(contains_compact(&lines, "筛选"), "{lines:?}");
     }
 
     #[test]
@@ -520,33 +607,33 @@ mod tests {
         assert!(contains(&lines, "CCF-Deadlines TUI"), "{lines:?}");
     }
 
-        #[test]
-        fn help_overlay_covers_the_table_behind_it() {
-            let mut app = app();
-            app.show_help = true;
-            let lines = render(&mut app, 120, 40);
+    #[test]
+    fn help_overlay_covers_the_table_behind_it() {
+        let mut app = app();
+        app.show_help = true;
+        let lines = render(&mut app, 120, 40);
 
-            // Row data must not bleed through the popup: the overlay is opaque, so
-            // the rows it spans are replaced by help content or blank space.
-            let overlay_start = lines
-                .iter()
-                .position(|line| line.contains("Keyboard Shortcuts"))
-                .expect("overlay is drawn");
-            let spanned = &lines[overlay_start..(overlay_start + 6).min(lines.len())];
-            assert!(
-                spanned.iter().all(|line| !line.contains("CVPR 2030")),
-                "table shows through the help overlay: {spanned:?}"
-            );
-        }
+        // Row data must not bleed through the popup: the overlay is opaque, so
+        // the rows it spans are replaced by help content or blank space.
+        let overlay_start = lines
+            .iter()
+            .position(|line| line.contains("Keyboard Shortcuts"))
+            .expect("overlay is drawn");
+        let spanned = &lines[overlay_start..(overlay_start + 6).min(lines.len())];
+        assert!(
+            spanned.iter().all(|line| !line.contains("CVPR 2030")),
+            "table shows through the help overlay: {spanned:?}"
+        );
+    }
 
-        #[test]
-        fn help_overlay_fits_a_small_terminal() {
-            let mut app = app();
-            app.show_help = true;
-            // Must not panic even when there is no room for the popup.
-            let lines = render(&mut app, 60, 12);
-            assert!(contains(&lines, "Keyboard Shortcuts"), "{lines:?}");
-        }
+    #[test]
+    fn help_overlay_fits_a_small_terminal() {
+        let mut app = app();
+        app.show_help = true;
+        // Must not panic even when there is no room for the popup.
+        let lines = render(&mut app, 60, 12);
+        assert!(contains(&lines, "Keyboard Shortcuts"), "{lines:?}");
+    }
 
     #[test]
     fn too_small_terminal_shows_hint() {
@@ -585,12 +672,30 @@ mod tests {
 
     #[test]
     fn centered_rect_fits_inside_area() {
-        let area = Rect { x: 0, y: 0, width: 100, height: 40 };
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 40,
+        };
         let popup = centered(area, 52, 20);
-        assert_eq!(popup, Rect { x: 24, y: 10, width: 52, height: 20 });
+        assert_eq!(
+            popup,
+            Rect {
+                x: 24,
+                y: 10,
+                width: 52,
+                height: 20
+            }
+        );
 
         // Oversized requests are clamped, never negative.
-        let small = Rect { x: 0, y: 0, width: 10, height: 4 };
+        let small = Rect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 4,
+        };
         let clamped = centered(small, 52, 20);
         assert_eq!(clamped.width, 10);
         assert_eq!(clamped.height, 4);

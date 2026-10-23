@@ -40,11 +40,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Outcome {
     }
 
     match app.focus {
-                Focus::Search => search_key(app, key),
-                Focus::Sidebar => sidebar_key(app, key),
-                Focus::Table => table_key(app, key),
-        }
+        Focus::Search => search_key(app, key),
+        Focus::Sidebar => sidebar_key(app, key),
+        Focus::Table => table_key(app, key),
     }
+}
 
 fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
     match key.code {
@@ -52,69 +52,74 @@ fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('r') => return Outcome::Reload,
         KeyCode::Char('?') => app.show_help = true,
         KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Sidebar,
-                // `/` focuses the search field, the way it works in the Textual app.
-                KeyCode::Char('/') => app.focus = Focus::Search,
-                KeyCode::Char('j') | KeyCode::Down => app.select_next(),
-                KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
-                KeyCode::Char('g') | KeyCode::Home => app.select_first(),
-                KeyCode::Char('G') | KeyCode::End => app.select_last(),
-                KeyCode::Char('f') => app.toggle_favorite(),
-                KeyCode::Char('l') => app.toggle_language(),
-                KeyCode::Esc => app.reset_filters(),
-                _ => {}
+        // `/` focuses the search field, the way it works in the Textual app.
+        KeyCode::Char('/') => app.focus = Focus::Search,
+        KeyCode::Char('j') | KeyCode::Down => app.select_next(),
+        KeyCode::Char('k') | KeyCode::Up => app.select_previous(),
+        KeyCode::Char('g') | KeyCode::Home => app.select_first(),
+        KeyCode::Char('G') | KeyCode::End => app.select_last(),
+        KeyCode::Char('f') => app.toggle_favorite(),
+        KeyCode::Char('l') => app.toggle_language(),
+        KeyCode::Char('s') => app.cycle_sort_column(),
+        KeyCode::Char('S') => app.toggle_sort_direction(),
+        KeyCode::Enter => {
+            app.open_selected_url();
         }
-        Outcome::Continue
+        KeyCode::Esc => app.reset_filters(),
+        _ => {}
     }
+    Outcome::Continue
+}
 
-    fn sidebar_key(app: &mut App, key: KeyEvent) -> Outcome {
-        match key.code {
-                KeyCode::Char('q') => return Outcome::Quit,
-                KeyCode::Char('r') => return Outcome::Reload,
-                KeyCode::Char('?') => app.show_help = true,
-                KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Table,
-                KeyCode::Char('/') => app.focus = Focus::Search,
-                KeyCode::Esc => {
-                    app.reset_filters();
-                    app.focus = Focus::Table;
-                }
-                // Space/Enter toggle the checkbox under the sidebar cursor.
-                KeyCode::Char(' ') | KeyCode::Enter => app.toggle_sidebar_item(),
-                KeyCode::Down | KeyCode::Char('j') => app.move_sidebar_cursor(1),
-                KeyCode::Up | KeyCode::Char('k') => app.move_sidebar_cursor(-1),
-                _ => {}
+fn sidebar_key(app: &mut App, key: KeyEvent) -> Outcome {
+    match key.code {
+        KeyCode::Char('q') => return Outcome::Quit,
+        KeyCode::Char('r') => return Outcome::Reload,
+        KeyCode::Char('?') => app.show_help = true,
+        KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Table,
+        KeyCode::Char('/') => app.focus = Focus::Search,
+        KeyCode::Esc => {
+            app.reset_filters();
+            app.focus = Focus::Table;
         }
-        Outcome::Continue
+        // Space/Enter toggle the checkbox under the sidebar cursor.
+        KeyCode::Char(' ') | KeyCode::Enter => app.toggle_sidebar_item(),
+        KeyCode::Down | KeyCode::Char('j') => app.move_sidebar_cursor(1),
+        KeyCode::Up | KeyCode::Char('k') => app.move_sidebar_cursor(-1),
+        _ => {}
     }
+    Outcome::Continue
+}
 
-    /// Text-entry mode: every printable key belongs to the query.
-    fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
-        match key.code {
-                KeyCode::Esc => {
-                    app.search_input.clear();
-                    app.commit_search();
-                    app.focus = Focus::Table;
-                }
-                KeyCode::Enter => {
-                    app.commit_search();
-                    app.focus = Focus::Table;
-                }
-                KeyCode::Backspace => {
-                    app.search_input.pop();
-                    app.commit_search();
-                }
-                KeyCode::Char(c) => app.search_input.push(c),
-                _ => {}
+/// Text-entry mode: every printable key belongs to the query.
+fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
+    match key.code {
+        KeyCode::Esc => {
+            app.search_input.clear();
+            app.commit_search();
+            app.focus = Focus::Table;
         }
-        Outcome::Continue
+        KeyCode::Enter => {
+            app.commit_search();
+            app.focus = Focus::Table;
+        }
+        KeyCode::Backspace => {
+            app.search_input.pop();
+            app.commit_search();
+        }
+        KeyCode::Char(c) => app.search_input.push(c),
+        _ => {}
     }
+    Outcome::Continue
+}
 
 #[cfg(test)]
 mod tests {
+    use super::super::app::Language;
     use super::*;
-        use super::super::app::Language;
-        use crate::data::{DataService, Favorites};
-        use crate::model::CATEGORIES;
-        use ratatui::crossterm::event::KeyEventState;
+    use crate::data::{DataService, Favorites};
+    use crate::model::CATEGORIES;
+    use ratatui::crossterm::event::KeyEventState;
 
     const YAML: &str = "
 - title: CVPR
@@ -152,7 +157,9 @@ mod tests {
             path.join("cache.yml"),
             Favorites::empty_at(path.join("favorites.json")),
         );
-        service.load_conferences_with(|| Ok(YAML.to_string())).unwrap();
+        service
+            .load_conferences_with(|| Ok(YAML.to_string()))
+            .unwrap();
         App::new(service)
     }
 
@@ -274,127 +281,148 @@ mod tests {
     }
 
     #[test]
-        fn search_mode_captures_printable_keys() {
+    fn search_mode_captures_printable_keys() {
         let mut app = app();
-            // '/' focuses the field from the table.
-            press(&mut app, KeyCode::Char('/'));
-            assert_eq!(app.focus, Focus::Search);
+        // '/' focuses the field from the table.
+        press(&mut app, KeyCode::Char('/'));
+        assert_eq!(app.focus, Focus::Search);
 
-            // Keys that are global shortcuts elsewhere are literal text here.
-            for c in "qr?".chars() {
-                press(&mut app, KeyCode::Char(c));
-            }
-            assert_eq!(app.search_input, "qr?");
+        // Keys that are global shortcuts elsewhere are literal text here.
+        for c in "qr?".chars() {
+            press(&mut app, KeyCode::Char(c));
         }
+        assert_eq!(app.search_input, "qr?");
+    }
 
-        #[test]
-        fn search_mode_builds_and_applies_a_query() {
-            let mut app = app();
-            press(&mut app, KeyCode::Tab);
-            assert_eq!(app.focus, Focus::Sidebar);
-            press(&mut app, KeyCode::Char('/')); // sidebar -> search
-            assert_eq!(app.focus, Focus::Search);
+    #[test]
+    fn search_mode_builds_and_applies_a_query() {
+        let mut app = app();
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::Sidebar);
+        press(&mut app, KeyCode::Char('/')); // sidebar -> search
+        assert_eq!(app.focus, Focus::Search);
 
-            for c in "cvpr".chars() {
-                press(&mut app, KeyCode::Char(c));
-            }
+        for c in "cvpr".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
         assert_eq!(app.search_input, "cvpr");
-            // The query is applied on Enter.
-            assert_eq!(app.visible.len(), 2);
-            press(&mut app, KeyCode::Enter);
-            assert_eq!(app.filters.query, "cvpr");
-            assert_eq!(app.visible.len(), 1);
-            assert_eq!(app.focus, Focus::Table);
+        // The query is applied on Enter.
+        assert_eq!(app.visible.len(), 2);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.filters.query, "cvpr");
+        assert_eq!(app.visible.len(), 1);
+        assert_eq!(app.focus, Focus::Table);
+    }
+
+    #[test]
+    fn backspace_edits_query_live() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        for c in "cvprx".chars() {
+            press(&mut app, KeyCode::Char(c));
         }
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.search_input, "cvpr");
+        assert_eq!(app.filters.query, "cvpr");
+        assert_eq!(app.visible.len(), 1);
+    }
 
-        #[test]
-        fn backspace_edits_query_live() {
-            let mut app = app();
-            press(&mut app, KeyCode::Char('/'));
-            for c in "cvprx".chars() {
-                press(&mut app, KeyCode::Char(c));
-            }
-            press(&mut app, KeyCode::Backspace);
-            assert_eq!(app.search_input, "cvpr");
-            assert_eq!(app.filters.query, "cvpr");
-            assert_eq!(app.visible.len(), 1);
+    #[test]
+    fn escape_clears_the_query_and_returns_to_table() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        for c in "cvpr".chars() {
+            press(&mut app, KeyCode::Char(c));
         }
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.visible.len(), 1);
 
-        #[test]
-        fn escape_clears_the_query_and_returns_to_table() {
-            let mut app = app();
-            press(&mut app, KeyCode::Char('/'));
-            for c in "cvpr".chars() {
-                press(&mut app, KeyCode::Char(c));
-            }
-            press(&mut app, KeyCode::Enter);
-            assert_eq!(app.visible.len(), 1);
+        press(&mut app, KeyCode::Char('/'));
+        press(&mut app, KeyCode::Esc);
+        assert!(app.search_input.is_empty());
+        assert!(app.filters.query.is_empty());
+        assert_eq!(app.visible.len(), 2);
+        assert_eq!(app.focus, Focus::Table);
+    }
 
-            press(&mut app, KeyCode::Char('/'));
-            press(&mut app, KeyCode::Esc);
-            assert!(app.search_input.is_empty());
-            assert!(app.filters.query.is_empty());
-            assert_eq!(app.visible.len(), 2);
-            assert_eq!(app.focus, Focus::Table);
-        }
+    #[test]
+    fn escape_resets_filters_and_returns_to_table() {
+        let mut app = app();
+        app.toggle_category("AI");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.focus, Focus::Table);
+        assert!(app.is_category_enabled("AI"));
+    }
 
-        #[test]
-        fn escape_resets_filters_and_returns_to_table() {
-            let mut app = app();
-            app.toggle_category("AI");
-            press(&mut app, KeyCode::Tab);
-            press(&mut app, KeyCode::Esc);
-            assert_eq!(app.focus, Focus::Table);
-            assert!(app.is_category_enabled("AI"));
-        }
+    #[test]
+    fn sidebar_cursor_toggles_checkboxes() {
+        let mut app = app();
+        press(&mut app, KeyCode::Tab);
 
-        #[test]
-        fn sidebar_cursor_toggles_checkboxes() {
-            let mut app = app();
-            press(&mut app, KeyCode::Tab);
+        // The cursor starts on the first category (DS).
+        assert_eq!(app.sidebar_cursor, 0);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(!app.is_category_enabled("DS"));
 
-            // The cursor starts on the first category (DS).
-            assert_eq!(app.sidebar_cursor, 0);
-            press(&mut app, KeyCode::Char(' '));
-            assert!(!app.is_category_enabled("DS"));
+        // Moving down visits the next category, headings are skipped.
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.sidebar_cursor, 1);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(!app.is_category_enabled("NW"));
+    }
 
-            // Moving down visits the next category, headings are skipped.
+    #[test]
+    fn sidebar_cursor_clamps_at_both_ends() {
+        let mut app = app();
+        press(&mut app, KeyCode::Tab);
+
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.sidebar_cursor, 0);
+
+        for _ in 0..(CATEGORIES.len() + 20) {
             press(&mut app, KeyCode::Down);
-            assert_eq!(app.sidebar_cursor, 1);
-            press(&mut app, KeyCode::Char(' '));
-            assert!(!app.is_category_enabled("NW"));
         }
+        assert_eq!(app.sidebar_cursor, app.sidebar_controls().len() - 1);
+    }
 
-        #[test]
-        fn sidebar_cursor_clamps_at_both_ends() {
-            let mut app = app();
-            press(&mut app, KeyCode::Tab);
-
-            press(&mut app, KeyCode::Up);
-            assert_eq!(app.sidebar_cursor, 0);
-
-            for _ in 0..(CATEGORIES.len() + 20) {
-                press(&mut app, KeyCode::Down);
-            }
-            assert_eq!(app.sidebar_cursor, app.sidebar_controls().len() - 1);
+    #[test]
+    fn sidebar_search_entry_switches_to_search_mode() {
+        let mut app = app();
+        press(&mut app, KeyCode::Tab);
+        // Walk to the last entry, which is the search field.
+        for _ in 0..(CATEGORIES.len() + 20) {
+            press(&mut app, KeyCode::Down);
         }
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.focus, Focus::Search);
+    }
 
-        #[test]
-        fn sidebar_search_entry_switches_to_search_mode() {
-            let mut app = app();
-            press(&mut app, KeyCode::Tab);
-            // Walk to the last entry, which is the search field.
-            for _ in 0..(CATEGORIES.len() + 20) {
-                press(&mut app, KeyCode::Down);
-            }
-            press(&mut app, KeyCode::Char(' '));
-            assert_eq!(app.focus, Focus::Search);
-        }
+    #[test]
+    fn enter_opens_the_selected_url() {
+        let mut app = app();
+        // The fixture links are example.com, so this really spawns an opener.
+        // Only assert it did not refuse.
+        assert!(Outcome::Continue == press(&mut app, KeyCode::Enter));
+        assert!(app.status.is_some(), "expected a status message");
+    }
 
-        #[test]
-        fn reload_is_available_from_the_sidebar_too() {
-            let mut app = app();
-            press(&mut app, KeyCode::Tab);
-            assert_eq!(press(&mut app, KeyCode::Char('r')), Outcome::Reload);
-        }
+    #[test]
+    fn s_cycles_the_sort_column_and_shift_s_reverses() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!(app.sort_column, crate::ui::app::SortColumn::Title);
+        press(&mut app, KeyCode::Char('S'));
+        assert!(app.sort_reverse);
+        press(&mut app, KeyCode::Char('s'));
+        // Cycling resets the direction.
+        assert!(!app.sort_reverse);
+    }
+
+    #[test]
+    fn reload_is_available_from_the_sidebar_too() {
+        let mut app = app();
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(press(&mut app, KeyCode::Char('r')), Outcome::Reload);
+    }
 }

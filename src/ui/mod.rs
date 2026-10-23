@@ -6,6 +6,7 @@
 //! the Python implementation and is verified against it by `tests/golden.rs`.
 
 pub mod app;
+pub mod browser;
 pub mod input;
 pub mod render;
 pub mod theme;
@@ -14,8 +15,8 @@ use std::io;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
+use ratatui::crossterm::event::{self, Event};
 
 pub use app::{App, Focus, Language};
 pub use input::Outcome;

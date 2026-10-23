@@ -34,7 +34,10 @@ cargo run --release -- --url URL    # custom data source
 | `j` / `↓` | Move down |
 | `k` / `↑` | Move up |
 | `g` / `G` | First / last row |
+| `Enter` | Open the conference URL in the default browser |
 | `f` | Toggle favourite |
+| `s` | Cycle the sort column |
+| `S` | Reverse the sort direction |
 | `l` | Toggle language (EN/ZH) |
 | `r` | Refresh from the data source |
 | `/` | Search |
@@ -42,6 +45,11 @@ cargo run --release -- --url URL    # custom data source
 | `Esc` | Reset all filters |
 | `?` | Help |
 | `q` | Quit |
+
+Sorting starts at the data layer's own order (favourites first, then running by
+urgency, then TBD, then finished). `s` cycles through `Title`, `Sub`, `CCF`,
+`Countdown`, `Date`, `Place` and back to default; the active column is marked
+with `▲`/`▼` in the table header.
 
 ### Sidebar
 
@@ -78,15 +86,25 @@ instead of triggering their global shortcuts.
   divergence rather than hiding it.
 - **An embedded snapshot** is compiled into the binary via `assets/allconf.yml`
   so the app works offline on first run.
+- **Opening a URL does not go through a shell.** The Python app calls
+  `webbrowser.open`; this spawns the platform opener (`rundll32` on Windows,
+  `open` on macOS, `xdg-open` elsewhere) directly, so a URL from the downloaded
+  dataset can never be interpreted as a command. Only `http`/`https` URLs are
+  accepted.
 
 ## Development
 
 ```bash
-cargo test                 # 141 tests, including golden parity
+cargo test                 # 156 tests, including golden parity
 cargo clippy --all-targets
-cargo run --example snapshot          # print one rendered frame
-cargo run --example snapshot -- --help   # ... with the help overlay
+cargo run --example snapshot              # print one rendered frame
+cargo run --example snapshot -- --help     # ... with the help overlay
+cargo run --example snapshot -- --zh       # ... in Chinese
+cargo run --example snapshot -- --sort-title  # ... sorted by title
 ```
+
+The `snapshot` example renders through `TestBackend`, so it needs no terminal and
+is the quickest way to eyeball a layout change.
 
 `tests/fixtures/gen_golden.py` regenerates `tests/fixtures/golden.json` from the
 Python implementation; re-run it only when the Python behaviour itself changes.

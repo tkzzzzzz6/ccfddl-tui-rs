@@ -38,6 +38,15 @@ fn main() {
         if args.iter().any(|a| a == "--focus-sidebar") {
             app.focus = ccfddl_tui::ui::Focus::Sidebar;
         }
+        if args.iter().any(|a| a == "--sort-title") {
+            app.cycle_sort_column();
+            app.status = None;
+        }
+        if args.iter().any(|a| a == "--sort-title-desc") {
+            app.cycle_sort_column();
+            app.toggle_sort_direction();
+            app.status = None;
+        }
 
     let (width, height) = (120u16, 32u16);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

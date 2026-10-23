@@ -12,7 +12,20 @@ use crate::data::{ConferenceRow, DataService};
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
+use super::browser;
+
 pub const SIDEBAR_WIDTH: u16 = 28;
+
+/// Rank ordering used when sorting by CCF rank: A, B, C, N.
+fn ccf_rank_order(rank: &str) -> u8 {
+    match rank {
+        "A" => 0,
+        "B" => 1,
+        "C" => 2,
+        "N" => 3,
+        _ => 4,
+    }
+}
 
 pub const CCF_RANKS: [&str; 4] = ["A", "B", "C", "N"];
 pub const CORE_RANKS: [&str; 5] = ["A*", "A", "B", "C", "N"];
@@ -75,6 +88,35 @@ impl SidebarItem {
     }
 }
 
+/// Columns the table can be sorted by, matching the clickable headers in the
+/// Python `DataTable`. `Default` keeps the data layer's own ordering
+/// (favourites first, then running by urgency, then TBD, then finished).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortColumn {
+    Default,
+    Title,
+    Sub,
+    CcfRank,
+    Countdown,
+    Date,
+    Place,
+}
+
+impl SortColumn {
+    /// The header label shown in the table.
+    pub fn header(self) -> &'static str {
+        match self {
+            Self::Default => "",
+            Self::Title => "Title",
+            Self::Sub => "Sub",
+            Self::CcfRank => "CCF",
+            Self::Countdown => "Countdown",
+            Self::Date => "Date",
+            Self::Place => "Place",
+        }
+    }
+}
+
 pub struct App {
     pub service: DataService,
     pub filters: FilterState,
@@ -90,6 +132,8 @@ pub struct App {
     pub sidebar_cursor: usize,
     /// Text typed into the sidebar search box, committed on Enter.
     pub search_input: String,
+    pub sort_column: SortColumn,
+    pub sort_reverse: bool,
 }
 
 impl App {
@@ -104,9 +148,11 @@ impl App {
             language: Language::En,
             status: None,
             show_help: false,
-                        sidebar_cursor: 0,
-                        search_input: String::new(),
-                    };
+            sidebar_cursor: 0,
+            search_input: String::new(),
+            sort_column: SortColumn::Default,
+            sort_reverse: false,
+        };
         app.reload(Utc::now());
         app
     }
@@ -118,13 +164,115 @@ impl App {
     }
 
     /// Recompute the visible rows and clamp the cursor back into range.
+    ///
+    /// The data layer applies its own ordering (favourites first, then running
+    /// by urgency, then TBD, then finished); an explicit sort column overrides
+    /// that on top.
     pub fn refresh_visible(&mut self) {
         self.visible = query::visible_rows(&self.rows, &self.filters);
+        self.apply_sort();
         self.selected = if self.visible.is_empty() {
             0
         } else {
             self.selected.min(self.visible.len() - 1)
         };
+    }
+
+    fn apply_sort(&mut self) {
+        if self.sort_column == SortColumn::Default {
+            return;
+        }
+        self.visible.sort_by(|a, b| {
+            let ordering = match self.sort_column {
+                SortColumn::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+                SortColumn::Sub => a.sub.cmp(&b.sub),
+                SortColumn::CcfRank => ccf_rank_order(&a.rank).cmp(&ccf_rank_order(&b.rank)),
+                // Rows without a deadline (TBD) sort last, as in Python.
+                SortColumn::Countdown => a.deadline.cmp(&b.deadline),
+                SortColumn::Date => a.date.cmp(&b.date),
+                SortColumn::Place => a.place.to_lowercase().cmp(&b.place.to_lowercase()),
+                SortColumn::Default => std::cmp::Ordering::Equal,
+            };
+            if self.sort_reverse {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
+    }
+
+    /// Cycle the sort column, like clicking the next header in the Textual app.
+    pub fn cycle_sort_column(&mut self) {
+        const COLUMNS: [SortColumn; 7] = [
+            SortColumn::Default,
+            SortColumn::Title,
+            SortColumn::Sub,
+            SortColumn::CcfRank,
+            SortColumn::Countdown,
+            SortColumn::Date,
+            SortColumn::Place,
+        ];
+        let index = COLUMNS
+            .iter()
+            .position(|c| *c == self.sort_column)
+            .unwrap_or(0);
+        self.sort_column = COLUMNS[(index + 1) % COLUMNS.len()];
+        self.sort_reverse = false;
+        self.status = Some(match self.sort_column {
+            SortColumn::Default => "Sort: default order".to_string(),
+            other => format!("Sort: {}", other.header()),
+        });
+        self.refresh_visible();
+        self.selected = 0;
+    }
+
+    /// Flip the direction of the active sort.
+    pub fn toggle_sort_direction(&mut self) {
+        if self.sort_column == SortColumn::Default {
+            return;
+        }
+        self.sort_reverse = !self.sort_reverse;
+        self.status = Some(format!(
+            "Sort: {} {}",
+            self.sort_column.header(),
+            if self.sort_reverse {
+                "descending"
+            } else {
+                "ascending"
+            }
+        ));
+        self.refresh_visible();
+    }
+
+    /// Open the selected conference's URL in the default browser.
+    ///
+    /// Returns `false` and sets `status` when there is nothing to open, so the
+    /// caller can skip touching the network.
+    pub fn open_selected_url(&mut self) -> bool {
+        let Some(row) = self.selected_row() else {
+            self.status = Some("No row selected".to_string());
+            return false;
+        };
+        let link = row.link.clone();
+        if link.trim().is_empty() {
+            self.status = Some(format!("{} has no link", row.title));
+            return false;
+        }
+        if !browser::is_openable_url(&link) {
+            self.status = Some(format!("Invalid URL: {link}"));
+            return false;
+        }
+
+        match browser::open_url(&link) {
+            Ok(()) => {
+                self.status = Some(format!("Opening {}", row.title));
+                true
+            }
+            Err(error) => {
+                self.status = Some(format!("Failed to open URL: {error}"));
+                false
+            }
+        }
     }
 
     pub fn selected_row(&self) -> Option<&ConferenceRow> {
@@ -222,22 +370,22 @@ impl App {
             None => Some(format!("{} removed from favorites", row.title)),
         };
         self.refresh_visible();
-                // Favourites jump to the top of the list, so keep the cursor on the row
-                // the user acted on instead of leaving it on whatever slid into the
-                // old slot.
-                self.select_conference(&row.title, row.year);
-            }
+        // Favourites jump to the top of the list, so keep the cursor on the row
+        // the user acted on instead of leaving it on whatever slid into the
+        // old slot.
+        self.select_conference(&row.title, row.year);
+    }
 
-            /// Move the cursor onto a specific conference, if it is still visible.
-            pub fn select_conference(&mut self, title: &str, year: i32) {
-                if let Some(index) = self
-                    .visible
-                    .iter()
-                    .position(|row| row.title == title && row.year == year)
-                {
-                    self.selected = index;
-                }
-            }
+    /// Move the cursor onto a specific conference, if it is still visible.
+    pub fn select_conference(&mut self, title: &str, year: i32) {
+        if let Some(index) = self
+            .visible
+            .iter()
+            .position(|row| row.title == title && row.year == year)
+        {
+            self.selected = index;
+        }
+    }
 
     /// Advance the clock by one tick, flipping rows whose deadline just passed.
     ///
@@ -265,38 +413,41 @@ impl App {
     }
 
     /// Selectable sidebar entries, i.e. the ones the cursor can visit.
-        pub fn sidebar_controls(&self) -> Vec<SidebarItem> {
-            self.sidebar_items().into_iter().filter(SidebarItem::is_selectable).collect()
-        }
+    pub fn sidebar_controls(&self) -> Vec<SidebarItem> {
+        self.sidebar_items()
+            .into_iter()
+            .filter(SidebarItem::is_selectable)
+            .collect()
+    }
 
-        /// Move the sidebar cursor by `delta`, skipping section headings.
-        pub fn move_sidebar_cursor(&mut self, delta: isize) {
-            let total = self.sidebar_controls().len();
-            if total == 0 {
-                return;
-            }
-            let next = self.sidebar_cursor as isize + delta;
-            self.sidebar_cursor = next.clamp(0, total as isize - 1) as usize;
+    /// Move the sidebar cursor by `delta`, skipping section headings.
+    pub fn move_sidebar_cursor(&mut self, delta: isize) {
+        let total = self.sidebar_controls().len();
+        if total == 0 {
+            return;
         }
+        let next = self.sidebar_cursor as isize + delta;
+        self.sidebar_cursor = next.clamp(0, total as isize - 1) as usize;
+    }
 
-        /// Toggle whatever the sidebar cursor is currently on.
-        pub fn toggle_sidebar_item(&mut self) {
-            let Some(item) = self.sidebar_controls().get(self.sidebar_cursor).cloned() else {
-                return;
-            };
-            match item {
-                SidebarItem::Category(sub) => self.toggle_category(&sub),
-                SidebarItem::CcfRank(rank) => self.toggle_ccf_rank(&rank),
-                SidebarItem::CoreRank(rank) => self.toggle_core_rank(&rank),
-                SidebarItem::ThcplRank(rank) => self.toggle_thcpl_rank(&rank),
-                SidebarItem::ShowExpired => self.toggle_show_expired(),
-                SidebarItem::Search => self.focus = Focus::Search,
-                SidebarItem::Header(_) => {}
-            }
+    /// Toggle whatever the sidebar cursor is currently on.
+    pub fn toggle_sidebar_item(&mut self) {
+        let Some(item) = self.sidebar_controls().get(self.sidebar_cursor).cloned() else {
+            return;
+        };
+        match item {
+            SidebarItem::Category(sub) => self.toggle_category(&sub),
+            SidebarItem::CcfRank(rank) => self.toggle_ccf_rank(&rank),
+            SidebarItem::CoreRank(rank) => self.toggle_core_rank(&rank),
+            SidebarItem::ThcplRank(rank) => self.toggle_thcpl_rank(&rank),
+            SidebarItem::ShowExpired => self.toggle_show_expired(),
+            SidebarItem::Search => self.focus = Focus::Search,
+            SidebarItem::Header(_) => {}
         }
+    }
 
-        /// Sidebar entries in display order.
-        pub fn sidebar_items(&self) -> Vec<SidebarItem> {
+    /// Sidebar entries in display order.
+    pub fn sidebar_items(&self) -> Vec<SidebarItem> {
         let mut items = vec![SidebarItem::Header("Categories")];
         items.extend(
             category_items()
@@ -304,11 +455,23 @@ impl App {
                 .map(|(sub, _)| SidebarItem::Category(sub.to_string())),
         );
         items.push(SidebarItem::Header("CCF Ranks"));
-        items.extend(CCF_RANKS.iter().map(|r| SidebarItem::CcfRank((*r).to_string())));
+        items.extend(
+            CCF_RANKS
+                .iter()
+                .map(|r| SidebarItem::CcfRank((*r).to_string())),
+        );
         items.push(SidebarItem::Header("CORE Ranks"));
-        items.extend(CORE_RANKS.iter().map(|r| SidebarItem::CoreRank((*r).to_string())));
+        items.extend(
+            CORE_RANKS
+                .iter()
+                .map(|r| SidebarItem::CoreRank((*r).to_string())),
+        );
         items.push(SidebarItem::Header("THCPL Ranks"));
-        items.extend(THCPL_RANKS.iter().map(|r| SidebarItem::ThcplRank((*r).to_string())));
+        items.extend(
+            THCPL_RANKS
+                .iter()
+                .map(|r| SidebarItem::ThcplRank((*r).to_string())),
+        );
         items.push(SidebarItem::Header("Options"));
         items.push(SidebarItem::ShowExpired);
         items.push(SidebarItem::Header("Search"));
@@ -334,7 +497,11 @@ impl App {
 
     /// `Showing 12 of 345 conferences` / `显示 12 / 345 个会议`.
     pub fn subtitle(&self) -> String {
-        let local = if self.service.using_local_data() { " [LOCAL]" } else { "" };
+        let local = if self.service.using_local_data() {
+            " [LOCAL]"
+        } else {
+            ""
+        };
         match self.language {
             Language::En => format!(
                 "Showing {} of {} conferences{local}",
@@ -354,8 +521,8 @@ impl App {
 mod tests {
     use super::*;
     use crate::data::{DataError, Favorites};
-        use chrono::{Duration, TimeZone};
-            use std::path::PathBuf;
+    use chrono::{Duration, TimeZone};
+    use std::path::PathBuf;
 
     const YAML: &str = "
 - title: CVPR
@@ -424,15 +591,15 @@ mod tests {
 
         app.toggle_category("AI");
         assert!(!app.is_category_enabled("AI"));
-            // Every other category stays enabled, so the set is "all but AI".
-            assert!(!app.filters.subs.contains("AI"));
-            assert_eq!(app.filters.subs.len(), CATEGORIES.len() - 1);
-            // CVPR is the only AI conference and it disappears.
-            assert!(!app.visible.iter().any(|r| r.title == "CVPR"));
+        // Every other category stays enabled, so the set is "all but AI".
+        assert!(!app.filters.subs.contains("AI"));
+        assert_eq!(app.filters.subs.len(), CATEGORIES.len() - 1);
+        // CVPR is the only AI conference and it disappears.
+        assert!(!app.visible.iter().any(|r| r.title == "CVPR"));
 
-            app.toggle_category("AI");
-            assert_eq!(app.visible.len(), 2);
-        }
+        app.toggle_category("AI");
+        assert_eq!(app.visible.len(), 2);
+    }
 
     #[test]
     fn rank_toggles_filter_rows() {
@@ -536,41 +703,41 @@ mod tests {
     #[test]
     fn favorite_toggle_persists_and_reorders() {
         let mut app = app();
-            app.select_last();
-            let target = app.selected_row().expect("a row is selected").clone();
-            assert!(!target.is_favorite);
+        app.select_last();
+        let target = app.selected_row().expect("a row is selected").clone();
+        assert!(!target.is_favorite);
 
-            app.toggle_favorite();
-            assert!(app.service.is_favorite(&target.title, target.year));
-            assert_eq!(
-                app.status.as_deref(),
-                Some(format!("{} added to favorites", target.title).as_str())
-            );
-            // Favourites sort to the top of the table, so the cursor now sits on it.
-            assert!(app.visible[0].is_favorite);
-            assert_eq!(app.visible[0].title, target.title);
-            assert_eq!(app.selected, 0);
+        app.toggle_favorite();
+        assert!(app.service.is_favorite(&target.title, target.year));
+        assert_eq!(
+            app.status.as_deref(),
+            Some(format!("{} added to favorites", target.title).as_str())
+        );
+        // Favourites sort to the top of the table, so the cursor now sits on it.
+        assert!(app.visible[0].is_favorite);
+        assert_eq!(app.visible[0].title, target.title);
+        assert_eq!(app.selected, 0);
 
-            app.toggle_favorite();
-            assert!(!app.service.is_favorite(&target.title, target.year));
-                        // Back in deadline order, but the cursor still tracks the same row.
-                        assert_eq!(app.selected_row().map(|r| &r.title), Some(&target.title));
-                    }
+        app.toggle_favorite();
+        assert!(!app.service.is_favorite(&target.title, target.year));
+        // Back in deadline order, but the cursor still tracks the same row.
+        assert_eq!(app.selected_row().map(|r| &r.title), Some(&target.title));
+    }
 
-                    #[test]
-                    fn cursor_follows_a_favorite_across_resorts() {
-                        let mut app = app();
-                        app.select_last();
-                        let target = app.selected_row().unwrap().clone();
+    #[test]
+    fn cursor_follows_a_favorite_across_resorts() {
+        let mut app = app();
+        app.select_last();
+        let target = app.selected_row().unwrap().clone();
 
-                        app.toggle_favorite();
-                        assert_eq!(app.selected_row().unwrap().title, target.title);
+        app.toggle_favorite();
+        assert_eq!(app.selected_row().unwrap().title, target.title);
 
-                        // Removing it moves the row back down, and the cursor follows.
-                        app.toggle_favorite();
-                        assert_eq!(app.selected_row().unwrap().title, target.title);
-                        assert!(!app.selected_row().unwrap().is_favorite);
-                    }
+        // Removing it moves the row back down, and the cursor follows.
+        app.toggle_favorite();
+        assert_eq!(app.selected_row().unwrap().title, target.title);
+        assert!(!app.selected_row().unwrap().is_favorite);
+    }
 
     #[test]
     fn favorite_on_empty_selection_reports_status() {
@@ -643,10 +810,22 @@ mod tests {
         let items = app.sidebar_items();
         let count = |f: fn(&SidebarItem) -> bool| items.iter().filter(|i| f(i)).count();
 
-        assert_eq!(count(|i| matches!(i, SidebarItem::Category(_))), CATEGORIES.len());
-        assert_eq!(count(|i| matches!(i, SidebarItem::CcfRank(_))), CCF_RANKS.len());
-        assert_eq!(count(|i| matches!(i, SidebarItem::CoreRank(_))), CORE_RANKS.len());
-        assert_eq!(count(|i| matches!(i, SidebarItem::ThcplRank(_))), THCPL_RANKS.len());
+        assert_eq!(
+            count(|i| matches!(i, SidebarItem::Category(_))),
+            CATEGORIES.len()
+        );
+        assert_eq!(
+            count(|i| matches!(i, SidebarItem::CcfRank(_))),
+            CCF_RANKS.len()
+        );
+        assert_eq!(
+            count(|i| matches!(i, SidebarItem::CoreRank(_))),
+            CORE_RANKS.len()
+        );
+        assert_eq!(
+            count(|i| matches!(i, SidebarItem::ThcplRank(_))),
+            THCPL_RANKS.len()
+        );
         assert_eq!(count(|i| matches!(i, SidebarItem::ShowExpired)), 1);
         assert_eq!(count(|i| matches!(i, SidebarItem::Search)), 1);
         assert_eq!(count(|i| matches!(i, SidebarItem::Header(_))), 6);
@@ -654,10 +833,133 @@ mod tests {
     }
 
     #[test]
+    fn sort_column_cycles_and_wraps() {
+        let mut app = app();
+        assert_eq!(app.sort_column, SortColumn::Default);
+
+        let expected = [
+            SortColumn::Title,
+            SortColumn::Sub,
+            SortColumn::CcfRank,
+            SortColumn::Countdown,
+            SortColumn::Date,
+            SortColumn::Place,
+            SortColumn::Default,
+        ];
+        for column in expected {
+            app.cycle_sort_column();
+            assert_eq!(app.sort_column, column);
+        }
+    }
+
+    #[test]
+    fn sorting_by_title_orders_ascending_and_reverses() {
+        let mut app = app();
+        app.cycle_sort_column(); // -> Title
+        assert_eq!(app.sort_column, SortColumn::Title);
+        let titles: Vec<&str> = app.visible.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, ["CVPR", "ICDE"]);
+
+        app.toggle_sort_direction();
+        assert!(app.sort_reverse);
+        let titles: Vec<&str> = app.visible.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, ["ICDE", "CVPR"]);
+    }
+
+    #[test]
+    fn sorting_by_ccf_rank_uses_a_b_c_n_order() {
+        let mut app = app();
+        app.show_help = false;
+        // Make three rows visible with distinct ranks.
+        app.search_input = String::new();
+        app.commit_search();
+        app.toggle_show_expired(); // now 3 rows: C, A, B by deadline
+        assert_eq!(app.visible.len(), 3);
+
+        for _ in 0..3 {
+            app.cycle_sort_column(); // Title -> Sub -> CcfRank
+        }
+        assert_eq!(app.sort_column, SortColumn::CcfRank);
+        let ranks: Vec<&str> = app.visible.iter().map(|r| r.rank.as_str()).collect();
+        assert_eq!(ranks, ["A", "B", "C"]);
+    }
+
+    #[test]
+    fn toggling_direction_without_a_column_is_a_no_op() {
+        let mut app = app();
+        assert_eq!(app.sort_column, SortColumn::Default);
+        app.toggle_sort_direction();
+        assert!(!app.sort_reverse);
+        assert_eq!(app.sort_column, SortColumn::Default);
+    }
+
+    #[test]
+    fn sorting_resets_the_cursor_to_the_top() {
+        let mut app = app();
+        app.select_last();
+        assert_eq!(app.selected, 1);
+        app.cycle_sort_column();
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn default_sort_keeps_the_data_layer_order() {
+        let app = app();
+        // Data layer puts the nearer deadline (CVPR, June) before ICDE (July).
+        let titles: Vec<&str> = app.visible.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, ["CVPR", "ICDE"]);
+        assert_eq!(app.sort_column, SortColumn::Default);
+    }
+
+    #[test]
+    fn open_selected_url_reports_when_there_is_no_row() {
+        let mut app = app();
+        app.search_input = "zzzznotfound".to_string();
+        app.commit_search();
+        assert!(!app.open_selected_url());
+        assert_eq!(app.status.as_deref(), Some("No row selected"));
+    }
+
+    #[test]
+    fn open_selected_url_rejects_a_non_http_link() {
+        let mut app = app();
+        app.rows[0].link = "file:///etc/passwd".to_string();
+        app.refresh_visible();
+        app.selected = 0;
+
+        // The row exists, but the link is refused before anything is spawned.
+        assert!(!app.open_selected_url());
+        assert!(
+            app.status.as_deref().unwrap().contains("Invalid URL"),
+            "{:?}",
+            app.status
+        );
+    }
+
+    #[test]
+    fn open_selected_url_reports_a_missing_link() {
+        let mut app = app();
+        app.rows[0].link = String::new();
+        app.refresh_visible();
+        app.selected = 0;
+
+        assert!(!app.open_selected_url());
+        assert!(
+            app.status.as_deref().unwrap().contains("has no link"),
+            "{:?}",
+            app.status
+        );
+    }
+
+    #[test]
     fn category_items_expose_english_names() {
         let items = category_items();
         assert_eq!(items.len(), CATEGORIES.len());
         assert_eq!(items[0], ("DS", "Computer Architecture"));
-        assert!(items.iter().any(|(sub, name)| *sub == "DB" && *name == "Database"));
+        assert!(
+            items
+                .iter()
+                .any(|(sub, name)| *sub == "DB" && *name == "Database")
+        );
     }
 }
