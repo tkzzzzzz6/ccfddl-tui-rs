@@ -129,14 +129,26 @@ mod tests {
     fn every_category_has_a_distinct_colour() {
         let mut seen = std::collections::HashSet::new();
         for cat in crate::model::CATEGORIES {
-            assert!(seen.insert(sub_color(cat.sub)), "duplicate colour for {}", cat.sub);
+            assert!(
+                seen.insert(sub_color(cat.sub)),
+                "duplicate colour for {}",
+                cat.sub
+            );
         }
         assert_eq!(sub_color("ZZ"), TEXT);
     }
 
     #[test]
     fn urgent_countdown_is_bold() {
-        assert!(countdown_style(CountdownColor::Red).add_modifier.contains(Modifier::BOLD));
-        assert!(!countdown_style(CountdownColor::Green).add_modifier.contains(Modifier::BOLD));
+        assert!(
+            countdown_style(CountdownColor::Red)
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
+        assert!(
+            !countdown_style(CountdownColor::Green)
+                .add_modifier
+                .contains(Modifier::BOLD)
+        );
     }
 }
