@@ -186,4 +186,16 @@ It does not push commits or publish releases.
 
 Before publishing, update `Cargo.toml` and the changelog, push the tag, then
 review the draft and its downloaded packages. No crates.io, container or nightly
-publication is configured.
+publication is configured. Release packages include `README.md` and `LICENSE`
+when present.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development, testing, commit and
+pull-request workflow. [AGENTS.md](AGENTS.md) documents the architecture and
+agent-specific maintenance conventions.
+
+## License
+
+This project is distributed under the [MIT License](LICENSE), retaining the
+original CCFDDL copyright notice.

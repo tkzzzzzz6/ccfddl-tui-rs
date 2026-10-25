@@ -86,7 +86,7 @@ jobs:
         run: cargo build --release --locked
 
       - name: Package Windows binary
-        id: package
+        id: package_windows
         if: matrix.platform == 'windows'
         shell: pwsh
         env:
@@ -105,7 +105,7 @@ jobs:
           "arch=$arch" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8NoBOM
 
       - name: Package Unix binary
-        id: package
+        id: package_unix
         if: matrix.platform != 'windows'
         shell: bash
         env:
@@ -135,7 +135,7 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.platform }}-${{ steps.package.outputs.arch }}
+          name: release-${{ matrix.platform }}-${{ steps.package_windows.outputs.arch }}${{ steps.package_unix.outputs.arch }}
           path: |
             *.zip
             *.tar.gz
