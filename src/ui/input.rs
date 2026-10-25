@@ -3,9 +3,13 @@
 //! Split out from [`App`](super::app::App) so the bindings can be exercised
 //! without constructing a terminal.
 
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::layout::Position;
 
 use super::app::{App, Focus};
+use super::view::{SCROLL_STEP, ViewState};
 
 /// What the caller should do after a key was handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +64,7 @@ fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
         KeyCode::Char('f') => app.toggle_favorite(),
         KeyCode::Char('l') => app.toggle_language(),
+        KeyCode::Char('d') => app.toggle_details(),
         KeyCode::Char('s') => app.cycle_sort_column(),
         KeyCode::Char('S') => app.toggle_sort_direction(),
         KeyCode::Enter => {
@@ -109,6 +114,99 @@ fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
         }
         KeyCode::Char(c) => app.search_input.push(c),
         _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Route a mouse event through the hit map produced by the latest render.
+/// Keyboard and mouse actions deliberately share the same `App` methods.
+pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> Outcome {
+    let point = Position {
+        x: mouse.column,
+        y: mouse.row,
+    };
+
+    if app.show_help {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let close_clicked = view
+                .layout
+                .help_close
+                .is_some_and(|area| area.contains(point));
+            let outside_clicked = view.layout.help.is_some_and(|area| !area.contains(point));
+            if close_clicked || outside_clicked {
+                app.show_help = false;
+            }
+        }
+        return Outcome::Continue;
+    }
+
+    let scroll = match mouse.kind {
+        MouseEventKind::ScrollUp => -SCROLL_STEP,
+        MouseEventKind::ScrollDown => SCROLL_STEP,
+        _ => 0,
+    };
+    if scroll != 0 {
+        if view.layout.table.contains(point) {
+            view.scroll_table(app, scroll);
+        } else if view.layout.sidebar.contains(point) {
+            view.scroll_sidebar(scroll);
+        }
+        return Outcome::Continue;
+    }
+
+    if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return Outcome::Continue;
+    }
+
+    if view.layout.search.contains(point) {
+        app.focus = Focus::Search;
+        if let Some(index) = app
+            .sidebar_controls()
+            .iter()
+            .position(|item| matches!(item, super::app::SidebarItem::Search))
+        {
+            app.sidebar_cursor = index;
+        }
+        return Outcome::Continue;
+    }
+
+    for (area, column) in &view.layout.table_columns {
+        if area.contains(point) {
+            app.focus = Focus::Table;
+            app.sort_by_column(*column);
+            view.sync_table(app);
+            return Outcome::Continue;
+        }
+    }
+
+    for (area, item) in &view.layout.sidebar_rows {
+        if !area.contains(point) || !item.is_selectable() {
+            continue;
+        }
+        app.focus = Focus::Sidebar;
+        if let Some(index) = app
+            .sidebar_controls()
+            .iter()
+            .position(|candidate| candidate == item)
+        {
+            app.sidebar_cursor = index;
+        }
+        app.toggle_sidebar_item();
+        return Outcome::Continue;
+    }
+
+    let rows = view.layout.table_rows;
+    if rows.contains(point) {
+        let visible_index = view.table_state.offset() + (point.y - rows.y) as usize;
+        if visible_index < app.visible.len() {
+            app.focus = Focus::Table;
+            if app.selected == visible_index {
+                app.toggle_details();
+            } else {
+                app.selected = visible_index;
+            }
+            view.sync_table(app);
+        }
     }
     Outcome::Continue
 }
@@ -360,14 +458,21 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Tab);
 
-        // The cursor starts on the first category (DS).
-        assert_eq!(app.sidebar_cursor, 0);
+        // Search is pinned first; move directly to the first category.
+        let ds = app
+            .sidebar_controls()
+            .iter()
+            .position(
+                |item| matches!(item, super::super::app::SidebarItem::Category(sub) if sub == "DS"),
+            )
+            .unwrap();
+        app.sidebar_cursor = ds;
         press(&mut app, KeyCode::Char(' '));
         assert!(!app.is_category_enabled("DS"));
 
         // Moving down visits the next category, headings are skipped.
         press(&mut app, KeyCode::Down);
-        assert_eq!(app.sidebar_cursor, 1);
+        assert_eq!(app.sidebar_cursor, ds + 1);
         press(&mut app, KeyCode::Char(' '));
         assert!(!app.is_category_enabled("NW"));
     }
@@ -390,21 +495,28 @@ mod tests {
     fn sidebar_search_entry_switches_to_search_mode() {
         let mut app = app();
         press(&mut app, KeyCode::Tab);
-        // Walk to the last entry, which is the search field.
-        for _ in 0..(CATEGORIES.len() + 20) {
-            press(&mut app, KeyCode::Down);
-        }
+        // Search is the first, permanently visible sidebar control.
+        assert_eq!(app.sidebar_cursor, 0);
         press(&mut app, KeyCode::Char(' '));
         assert_eq!(app.focus, Focus::Search);
     }
 
     #[test]
-    fn enter_opens_the_selected_url() {
+    fn enter_handles_the_selected_url_without_desktop_side_effects() {
         let mut app = app();
-        // The fixture links are example.com, so this really spawns an opener.
-        // Only assert it did not refuse.
-        assert!(Outcome::Continue == press(&mut app, KeyCode::Enter));
-        assert!(app.status.is_some(), "expected a status message");
+        // Invalid URLs exercise the Enter wiring without launching a browser
+        // on developer machines or CI runners.
+        app.rows[0].link = "file:///etc/passwd".to_string();
+        app.refresh_visible();
+
+        assert_eq!(press(&mut app, KeyCode::Enter), Outcome::Continue);
+        assert!(
+            app.status
+                .as_deref()
+                .is_some_and(|status| status.contains("Invalid URL")),
+            "unexpected status: {:?}",
+            app.status
+        );
     }
 
     #[test]

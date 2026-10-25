@@ -169,16 +169,56 @@ pub struct Category {
 }
 
 pub const CATEGORIES: [Category; 10] = [
-    Category { name: "计算机体系结构/并行与分布计算/存储系统", name_en: "Computer Architecture", sub: "DS" },
-    Category { name: "计算机网络", name_en: "Network System", sub: "NW" },
-    Category { name: "网络与信息安全", name_en: "Network and System Security", sub: "SC" },
-    Category { name: "软件工程/系统软件/程序设计语言", name_en: "Software Engineering", sub: "SE" },
-    Category { name: "数据库/数据挖掘/内容检索", name_en: "Database", sub: "DB" },
-    Category { name: "计算机科学理论", name_en: "Computing Theory", sub: "CT" },
-    Category { name: "计算机图形学与多媒体", name_en: "Graphics", sub: "CG" },
-    Category { name: "人工智能", name_en: "Artificial Intelligence", sub: "AI" },
-    Category { name: "人机交互与普适计算", name_en: "Computer-Human Interaction", sub: "HI" },
-    Category { name: "交叉/综合/新兴", name_en: "Interdiscipline", sub: "MX" },
+    Category {
+        name: "计算机体系结构/并行与分布计算/存储系统",
+        name_en: "Computer Architecture",
+        sub: "DS",
+    },
+    Category {
+        name: "计算机网络",
+        name_en: "Network System",
+        sub: "NW",
+    },
+    Category {
+        name: "网络与信息安全",
+        name_en: "Network and System Security",
+        sub: "SC",
+    },
+    Category {
+        name: "软件工程/系统软件/程序设计语言",
+        name_en: "Software Engineering",
+        sub: "SE",
+    },
+    Category {
+        name: "数据库/数据挖掘/内容检索",
+        name_en: "Database",
+        sub: "DB",
+    },
+    Category {
+        name: "计算机科学理论",
+        name_en: "Computing Theory",
+        sub: "CT",
+    },
+    Category {
+        name: "计算机图形学与多媒体",
+        name_en: "Graphics",
+        sub: "CG",
+    },
+    Category {
+        name: "人工智能",
+        name_en: "Artificial Intelligence",
+        sub: "AI",
+    },
+    Category {
+        name: "人机交互与普适计算",
+        name_en: "Computer-Human Interaction",
+        sub: "HI",
+    },
+    Category {
+        name: "交叉/综合/新兴",
+        name_en: "Interdiscipline",
+        sub: "MX",
+    },
 ];
 
 pub fn get_category_by_sub(sub: &str) -> Option<&'static Category> {
@@ -236,7 +276,9 @@ mod tests {
 
     #[test]
     fn timeline_defaults_and_optionals() {
-        let t = Timeline::from_value(&parse("{abstract_deadline: '2024-01-01 00:00:00', comment: Main}"));
+        let t = Timeline::from_value(&parse(
+            "{abstract_deadline: '2024-01-01 00:00:00', comment: Main}",
+        ));
         assert_eq!(t.deadline, "TBD");
         assert_eq!(t.abstract_deadline.as_deref(), Some("2024-01-01 00:00:00"));
         assert_eq!(t.comment.as_deref(), Some("Main"));

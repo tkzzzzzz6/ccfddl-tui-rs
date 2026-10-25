@@ -11,9 +11,9 @@ fn find_longest_match(
     let mut prev = vec![0usize; b.len() + 1];
     let mut cur = vec![0usize; b.len() + 1];
 
-    for i in alo..ahi {
+    for (i, &a_char) in a.iter().enumerate().take(ahi).skip(alo) {
         for j in blo..bhi {
-            if a[i] == b[j] {
+            if a_char == b[j] {
                 let k = prev[j] + 1;
                 cur[j + 1] = k;
                 if k > best.2 {
@@ -78,7 +78,10 @@ mod tests {
     fn matches_python_difflib_reference_values() {
         // Reference values taken from difflib.SequenceMatcher(None, a, b).ratio().
         assert!(close(similarity_ratio("abcd", "bcde"), 0.75));
-        assert!(close(similarity_ratio("cvpr", "cvpr 2025"), 2.0 * 4.0 / 13.0));
+        assert!(close(
+            similarity_ratio("cvpr", "cvpr 2025"),
+            2.0 * 4.0 / 13.0
+        ));
         assert!(close(similarity_ratio("abxcd", "abcd"), 2.0 * 4.0 / 9.0));
     }
 

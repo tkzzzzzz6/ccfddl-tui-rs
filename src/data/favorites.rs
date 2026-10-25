@@ -41,7 +41,10 @@ impl Favorites {
 
     /// Empty favorites that will be saved to `path`; nothing is read from disk.
     pub fn empty_at(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into(), ids: BTreeSet::new() }
+        Self {
+            path: path.into(),
+            ids: BTreeSet::new(),
+        }
     }
 
     /// Load from `path`. A missing, corrupted or malformed file yields no favorites.
@@ -83,7 +86,10 @@ impl Favorites {
             log::warn!("Failed to save favorites: {e}");
             e.to_string()
         });
-        ToggleOutcome { is_favorite, save_error }
+        ToggleOutcome {
+            is_favorite,
+            save_error,
+        }
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -167,7 +173,11 @@ mod tests {
     fn loads_python_written_file() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("favorites.json");
-        fs::write(&path, r#"{"favorites": ["NeurIPS_2025", "ICML_2025", 42, null]}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"favorites": ["NeurIPS_2025", "ICML_2025", 42, null]}"#,
+        )
+        .unwrap();
 
         let fav = Favorites::load(&path);
         assert_eq!(fav.len(), 2);

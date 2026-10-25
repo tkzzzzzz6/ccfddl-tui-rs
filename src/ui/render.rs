@@ -1,21 +1,25 @@
-//! Drawing: header, filter sidebar, conference table, footer and help screen.
+//! Drawing: header, filter sidebar, conference table, details and help.
 //!
-//! The layout mirrors the Textual app — a fixed-width sidebar on the left and a
-//! DataTable filling the rest, with the header above and the footer below.
+//! Rendering also records the rectangles of interactive controls in
+//! `ViewState`, allowing mouse input to use exactly the same layout.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, Wrap,
+};
 
 use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
-use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem};
+use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
 use super::theme;
+use super::view::{LayoutMap, ViewState};
 
 /// Column headers, in the order of `ConferenceTable.add_columns`.
 pub const COLUMNS: [&str; 9] = [
@@ -30,10 +34,98 @@ pub const COLUMNS: [&str; 9] = [
     "Place",
 ];
 
-/// Draw the whole UI for the current frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableColumn {
+    Favorite,
+    Title,
+    Sub,
+    CcfRank,
+    CoreRank,
+    ThcplRank,
+    Countdown,
+    Date,
+    Place,
+}
+
+impl TableColumn {
+    fn label(self, language: Language) -> &'static str {
+        match (self, language) {
+            (Self::Favorite, _) => "★",
+            (Self::Title, Language::En) => "Title",
+            (Self::Title, Language::Zh) => "会议",
+            (Self::Sub, Language::En) => "Sub",
+            (Self::Sub, Language::Zh) => "类别",
+            (Self::CcfRank, _) => "CCF",
+            (Self::CoreRank, _) => "CORE",
+            (Self::ThcplRank, _) => "THCPL",
+            (Self::Countdown, Language::En) => "Countdown",
+            (Self::Countdown, Language::Zh) => "倒计时",
+            (Self::Date, Language::En) => "Date",
+            (Self::Date, Language::Zh) => "日期",
+            (Self::Place, Language::En) => "Place",
+            (Self::Place, Language::Zh) => "地点",
+        }
+    }
+
+    fn sort_column(self) -> Option<SortColumn> {
+        match self {
+            Self::Title => Some(SortColumn::Title),
+            Self::Sub => Some(SortColumn::Sub),
+            Self::CcfRank => Some(SortColumn::CcfRank),
+            Self::Countdown => Some(SortColumn::Countdown),
+            Self::Date => Some(SortColumn::Date),
+            Self::Place => Some(SortColumn::Place),
+            _ => None,
+        }
+    }
+
+    fn width(self, language: Language) -> Constraint {
+        match self {
+            Self::Favorite => Constraint::Length(1),
+            Self::Title => Constraint::Max(36),
+            Self::Sub if language == Language::Zh => Constraint::Length(4),
+            Self::Sub => Constraint::Length(3),
+            Self::CcfRank => Constraint::Length(3),
+            Self::CoreRank => Constraint::Length(4),
+            Self::ThcplRank => Constraint::Length(5),
+            Self::Countdown => Constraint::Length(14),
+            Self::Date => Constraint::Min(18),
+            Self::Place => Constraint::Min(12),
+        }
+    }
+}
+
+pub fn columns_for_width(width: u16) -> Vec<TableColumn> {
+    use TableColumn::*;
+    if width >= 140 {
+        vec![
+            Favorite, Title, Sub, CcfRank, CoreRank, ThcplRank, Countdown, Date, Place,
+        ]
+    } else if width >= 100 {
+        vec![Favorite, Title, Sub, CcfRank, Countdown, Date]
+    } else {
+        vec![Favorite, Title, CcfRank, Countdown]
+    }
+}
+
+fn tr(language: Language, en: &'static str, zh: &'static str) -> &'static str {
+    match language {
+        Language::En => en,
+        Language::Zh => zh,
+    }
+}
+
+/// Backwards-compatible one-frame renderer used by examples and simple tests.
 pub fn draw(frame: &mut Frame, app: &mut App, now: DateTime<Utc>) {
+    let mut view = ViewState::new();
+    draw_with_view(frame, app, &mut view, now);
+}
+
+/// Draw the whole UI and update the persistent scroll/hit-test state.
+pub fn draw_with_view(frame: &mut Frame, app: &mut App, view: &mut ViewState, now: DateTime<Utc>) {
     let area = frame.area();
-    if area.width < 40 || area.height < 8 {
+    view.layout = LayoutMap::default();
+    if area.width < 50 || area.height < 8 {
         render_too_small(frame, area);
         return;
     }
@@ -44,19 +136,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, now: DateTime<Utc>) {
         Constraint::Length(1),
     ])
     .areas(area);
+    view.layout.header = header;
+    view.layout.footer = footer;
 
     render_header(frame, app, header);
-    render_body(frame, app, body, now);
+    render_body(frame, app, view, body, now);
     render_footer(frame, app, footer);
 
     if app.show_help {
-        render_help(frame, area);
+        render_help(frame, app, view, area);
     }
 }
 
 fn render_too_small(frame: &mut Frame, area: Rect) {
     frame.render_widget(
-        Paragraph::new("Terminal too small\nResize to at least 40x8")
+        Paragraph::new("Terminal too small\nResize to at least 50x8")
             .style(theme::DIM)
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL)),
@@ -75,7 +169,12 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(format!(" {subtitle}"), theme::HEADER_STYLE),
     ];
-    if let Some(status) = &app.status {
+    if app.is_refreshing {
+        spans.push(Span::styled(
+            tr(app.language, "  |  Refreshing...", "  |  正在刷新..."),
+            Style::new().fg(theme::ACCENT).bg(theme::HEADER_BG),
+        ));
+    } else if let Some(status) = &app.status {
         spans.push(Span::styled(format!("  |  {status}"), theme::HEADER_STYLE));
     }
 
@@ -85,11 +184,34 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-fn render_body(frame: &mut Frame, app: &mut App, area: Rect, now: DateTime<Utc>) {
+fn render_body(
+    frame: &mut Frame,
+    app: &mut App,
+    view: &mut ViewState,
+    area: Rect,
+    now: DateTime<Utc>,
+) {
+    let show_details = app.show_details && area.height >= 16;
+    let (main, details) = if show_details {
+        let parts = Layout::vertical([Constraint::Min(7), Constraint::Length(9)]).split(area);
+        (parts[0], Some(parts[1]))
+    } else {
+        (area, None)
+    };
+    view.layout.details = details;
+
+    let sidebar_width = if main.width < 100 { 24 } else { SIDEBAR_WIDTH };
     let [sidebar, table] =
-        Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(20)]).areas(area);
-    render_sidebar(frame, app, sidebar);
-    render_table(frame, app, table, now);
+        Layout::horizontal([Constraint::Length(sidebar_width), Constraint::Min(20)]).areas(main);
+    view.layout.sidebar = sidebar;
+    view.layout.table = table;
+
+    render_sidebar(frame, app, view, sidebar);
+    let columns = columns_for_width(main.width);
+    render_table(frame, app, view, table, &columns, now);
+    if let Some(details) = details {
+        render_details(frame, app, details);
+    }
 }
 
 /// Sidebar entries as display strings with their checkbox state.
@@ -97,12 +219,37 @@ fn sidebar_line(app: &App, item: &SidebarItem) -> Line<'static> {
     let checkbox = |on: bool| if on { "[x] " } else { "[ ] " };
 
     match item {
-        SidebarItem::Header(title) => Line::from(Span::styled(*title, theme::SECTION_STYLE)),
+        SidebarItem::Header(title) => {
+            let title = match (*title, app.language) {
+                ("Options", Language::Zh) => "选项",
+                (other, _) => other,
+            };
+            Line::from(Span::styled(title, theme::SECTION_STYLE))
+        }
+        SidebarItem::CategoriesToggle => {
+            let arrow = if app.show_categories { "▾" } else { "▸" };
+            Line::from(vec![
+                Span::styled(format!("{arrow} "), theme::ACCENT),
+                Span::styled(
+                    format!(
+                        "{} ({}/{})",
+                        tr(app.language, "Categories", "分类"),
+                        app.filters.subs.len(),
+                        CATEGORIES.len()
+                    ),
+                    theme::SECTION_STYLE,
+                ),
+            ])
+        }
         SidebarItem::Category(sub) => {
-            let name = CATEGORIES
-                .iter()
-                .find(|c| c.sub == sub)
-                .map_or("", |c| c.name_en);
+            let name =
+                CATEGORIES
+                    .iter()
+                    .find(|c| c.sub == sub)
+                    .map_or("", |c| match app.language {
+                        Language::En => c.name_en,
+                        Language::Zh => c.name,
+                    });
             Line::from(vec![
                 Span::styled(checkbox(app.is_category_enabled(sub)), theme::TEXT),
                 Span::styled(format!("{sub} "), Style::new().fg(theme::sub_color(sub))),
@@ -111,35 +258,33 @@ fn sidebar_line(app: &App, item: &SidebarItem) -> Line<'static> {
         }
         SidebarItem::CcfRank(rank) => Line::from(vec![
             Span::styled(checkbox(app.is_ccf_rank_enabled(rank)), theme::TEXT),
-            Span::styled(
-                format!("CCF {rank}"),
-                Style::new().fg(theme::ccf_rank_color(rank)),
-            ),
+            Span::styled(rank.clone(), Style::new().fg(theme::ccf_rank_color(rank))),
         ]),
         SidebarItem::CoreRank(rank) => Line::from(vec![
             Span::styled(checkbox(app.is_core_rank_enabled(rank)), theme::TEXT),
-            Span::styled(
-                format!("CORE {rank}"),
-                Style::new().fg(theme::core_rank_color(rank)),
-            ),
+            Span::styled(rank.clone(), Style::new().fg(theme::core_rank_color(rank))),
         ]),
         SidebarItem::ThcplRank(rank) => Line::from(vec![
             Span::styled(checkbox(app.is_thcpl_rank_enabled(rank)), theme::TEXT),
-            Span::styled(
-                format!("THCPL {rank}"),
-                Style::new().fg(theme::thcpl_rank_color(rank)),
-            ),
+            Span::styled(rank.clone(), Style::new().fg(theme::thcpl_rank_color(rank))),
         ]),
         SidebarItem::ShowExpired => Line::from(vec![
             Span::styled(checkbox(app.filters.show_expired), theme::TEXT),
-            Span::raw("Show Expired"),
+            Span::raw(tr(app.language, "Show Expired", "显示已截止")),
         ]),
         SidebarItem::Search => {
-            // The caret only shows while the field has focus.
             let caret = if app.focus == Focus::Search { "_" } else { "" };
+            let query = if app.search_input.is_empty() {
+                Span::styled(
+                    tr(app.language, "Search conferences...", "搜索会议..."),
+                    theme::DIM,
+                )
+            } else {
+                Span::styled(app.search_input.clone(), theme::SEARCH_STYLE)
+            };
             let line = Line::from(vec![
-                Span::styled("> ", theme::DIM),
-                Span::styled(app.search_input.clone(), theme::SEARCH_STYLE),
+                Span::styled("/ ", Style::new().fg(theme::ACCENT)),
+                query,
                 Span::styled(caret.to_string(), theme::DIM),
             ]);
             if app.focus == Focus::Search {
@@ -151,271 +296,564 @@ fn sidebar_line(app: &App, item: &SidebarItem) -> Line<'static> {
     }
 }
 
-fn render_sidebar(frame: &mut Frame, app: &App, area: Rect) {
-    let title = match app.language {
-        Language::En => "Filters",
-        Language::Zh => "筛选",
-    };
-    let border = if app.focus == Focus::Sidebar {
+fn is_rank_item(item: &SidebarItem) -> bool {
+    matches!(
+        item,
+        SidebarItem::CcfRank(_) | SidebarItem::CoreRank(_) | SidebarItem::ThcplRank(_)
+    )
+}
+
+/// Build visual sidebar rows. Rank checkboxes are packed two per row while
+/// retaining one logical control per item for keyboard and mouse handling.
+fn visual_sidebar_rows(app: &App) -> Vec<Vec<SidebarItem>> {
+    let mut rows = Vec::new();
+    let mut pending_rank = None;
+
+    for item in app
+        .sidebar_items()
+        .into_iter()
+        .filter(|item| !matches!(item, SidebarItem::Search))
+    {
+        if is_rank_item(&item) {
+            if let Some(previous) = pending_rank.take() {
+                rows.push(vec![previous, item]);
+            } else {
+                pending_rank = Some(item);
+            }
+        } else {
+            if let Some(previous) = pending_rank.take() {
+                rows.push(vec![previous]);
+            }
+            rows.push(vec![item]);
+        }
+    }
+    if let Some(previous) = pending_rank {
+        rows.push(vec![previous]);
+    }
+    rows
+}
+
+fn render_sidebar(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
+    let title = tr(app.language, "Filters", "筛选");
+    let border = if matches!(app.focus, Focus::Sidebar | Focus::Search) {
         Style::new().fg(theme::PRIMARY)
     } else {
         theme::DIM
     };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE))
+        .border_style(border)
+        .style(theme::SIDEBAR_STYLE);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
 
-    let items = app.sidebar_items();
-    let inner_height = area.height.saturating_sub(2) as usize;
-    // Keep the highlighted control visible when the sidebar overflows.
+    let [search_area, list_area] =
+        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+    view.layout.search = search_area;
+    view.layout
+        .sidebar_rows
+        .push((search_area, SidebarItem::Search));
+    frame.render_widget(
+        Paragraph::new(sidebar_line(app, &SidebarItem::Search)).style(theme::SIDEBAR_STYLE),
+        search_area,
+    );
+
+    let rows = visual_sidebar_rows(app);
+    view.sidebar_visual_rows = rows.len();
+    view.sidebar_page = list_area.height as usize;
+
     let controls = app.sidebar_controls();
     let cursor_item = controls.get(app.sidebar_cursor);
-    let cursor_index = items
+    let cursor_row = rows
         .iter()
-        .position(|item| Some(item) == cursor_item)
-        .unwrap_or(0);
-    let offset = cursor_index.saturating_sub(inner_height.saturating_sub(1));
+        .position(|row| cursor_item.is_some_and(|cursor| row.contains(cursor)));
+    view.sync_sidebar_cursor(cursor_row);
 
     let focused = app.focus == Focus::Sidebar;
-    let lines: Vec<Line> = items
+    for (visual_index, row) in rows
         .iter()
         .enumerate()
-        .skip(offset)
-        .take(inner_height.max(1))
-        .map(|(index, item)| {
-            let line = sidebar_line(app, item);
-            if focused && index == cursor_index {
-                line.style(theme::SELECTED_STYLE)
-            } else {
-                line
-            }
-        })
-        .collect();
+        .skip(view.sidebar_offset)
+        .take(view.sidebar_page)
+    {
+        let row_area = Rect::new(
+            list_area.x,
+            list_area.y + (visual_index - view.sidebar_offset) as u16,
+            list_area.width,
+            1,
+        );
+        let widths = if row.len() == 2 {
+            Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
+                .spacing(1)
+                .split(row_area)
+        } else {
+            Layout::horizontal([Constraint::Min(1)]).split(row_area)
+        };
 
-    frame.render_widget(
-        Paragraph::new(lines).style(theme::SIDEBAR_STYLE).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE))
-                .border_style(border),
-        ),
-        area,
-    );
+        for (item, item_area) in row.iter().zip(widths.iter()) {
+            let selected = focused && cursor_item.is_some_and(|cursor| cursor == item);
+            let mut line = sidebar_line(app, item);
+            if selected {
+                line = line.style(theme::SELECTED_STYLE);
+            }
+            frame.render_widget(Paragraph::new(line).style(theme::SIDEBAR_STYLE), *item_area);
+            view.layout.sidebar_rows.push((*item_area, item.clone()));
+        }
+    }
+
+    if rows.len() > view.sidebar_page && list_area.height > 0 {
+        let mut state = ScrollbarState::new(rows.len())
+            .position(view.sidebar_offset)
+            .viewport_content_length(view.sidebar_page);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_style(theme::ACCENT)
+                .track_style(theme::DIM),
+            list_area,
+            &mut state,
+        );
+    }
 }
 
 /// Format one row into table cells.
-fn row_cells(row: &ConferenceRow, now: DateTime<Utc>) -> Vec<Cell<'static>> {
-    let favorite = if row.is_favorite {
-        Span::styled("★", Style::new().fg(theme::WARNING))
+fn compact_countdown(row: &ConferenceRow, now: DateTime<Utc>, language: Language) -> Span<'static> {
+    let countdown = format_deadline_countdown(row.deadline, row.is_tbd, now);
+    let text = if row.is_tbd {
+        tr(language, "TBD", "待定").to_string()
+    } else if let Some(deadline) = row.deadline {
+        if deadline <= now {
+            tr(language, "Expired", "已截止").to_string()
+        } else {
+            let remaining = deadline - now;
+            let total_seconds = remaining.num_seconds();
+            let days = remaining.num_days();
+            let hours = total_seconds.div_euclid(3600).rem_euclid(24);
+            let minutes = total_seconds.div_euclid(60).rem_euclid(60);
+            let seconds = total_seconds.rem_euclid(60);
+            if remaining < Duration::days(1) {
+                format!(
+                    "{:02}:{minutes:02}:{seconds:02}",
+                    total_seconds.div_euclid(3600)
+                )
+            } else if remaining < Duration::days(30) {
+                format!("{days}d {hours:02}:{minutes:02}:{seconds:02}")
+            } else {
+                format!("{days}d {hours:02}h")
+            }
+        }
     } else {
-        Span::styled("☆", theme::DIM)
+        "N/A".to_string()
     };
+    Span::styled(text, theme::countdown_style(countdown.color))
+}
 
-    // Running rows are highlighted, finished ones dimmed (`_format_title`).
+fn row_cells(
+    row: &ConferenceRow,
+    columns: &[TableColumn],
+    language: Language,
+    now: DateTime<Utc>,
+) -> Vec<Cell<'static>> {
     let title_style = if row.is_running && !row.is_tbd {
         theme::BOLD
     } else {
         theme::DIM
     };
 
-    let countdown = format_deadline_countdown(row.deadline, row.is_tbd, now);
-
-    let core = match &row.core_rank {
-        Some(rank) => Span::styled(rank.clone(), Style::new().fg(theme::core_rank_color(rank))),
-        None => Span::styled("-", theme::DIM),
-    };
-    let thcpl = match &row.thcpl_rank {
-        Some(rank) => Span::styled(rank.clone(), Style::new().fg(theme::thcpl_rank_color(rank))),
-        None => Span::styled("-", theme::DIM),
-    };
-
-    vec![
-        Cell::from(Line::from(favorite)),
-        Cell::from(Line::from(Span::styled(
-            format!("{} {}", row.title, row.year),
-            title_style,
-        ))),
-        Cell::from(Line::from(Span::styled(
-            row.sub.clone(),
-            Style::new().fg(theme::sub_color(&row.sub)),
-        ))),
-        Cell::from(Line::from(Span::styled(
-            row.rank.clone(),
-            Style::new().fg(theme::ccf_rank_color(&row.rank)),
-        ))),
-        Cell::from(Line::from(core)),
-        Cell::from(Line::from(thcpl)),
-        Cell::from(Line::from(Span::styled(
-            countdown.text,
-            theme::countdown_style(countdown.color),
-        ))),
-        Cell::from(row.date.clone()),
-        Cell::from(Line::from(Span::styled(
-            row.place.clone(),
-            theme::PLACE_STYLE,
-        ))),
-    ]
+    columns
+        .iter()
+        .map(|column| {
+            let line = match column {
+                TableColumn::Favorite => {
+                    let favorite = if row.is_favorite {
+                        Span::styled("★", Style::new().fg(theme::WARNING))
+                    } else {
+                        Span::styled("☆", theme::DIM)
+                    };
+                    Line::from(favorite)
+                }
+                TableColumn::Title => Line::from(Span::styled(
+                    format!("{} {}", row.title, row.year),
+                    title_style,
+                )),
+                TableColumn::Sub => Line::from(Span::styled(
+                    row.sub.clone(),
+                    Style::new().fg(theme::sub_color(&row.sub)),
+                )),
+                TableColumn::CcfRank => Line::from(Span::styled(
+                    row.rank.clone(),
+                    Style::new().fg(theme::ccf_rank_color(&row.rank)),
+                )),
+                TableColumn::CoreRank => match &row.core_rank {
+                    Some(rank) => Line::from(Span::styled(
+                        rank.clone(),
+                        Style::new().fg(theme::core_rank_color(rank)),
+                    )),
+                    None => Line::from(Span::styled("-", theme::DIM)),
+                },
+                TableColumn::ThcplRank => match &row.thcpl_rank {
+                    Some(rank) => Line::from(Span::styled(
+                        rank.clone(),
+                        Style::new().fg(theme::thcpl_rank_color(rank)),
+                    )),
+                    None => Line::from(Span::styled("-", theme::DIM)),
+                },
+                TableColumn::Countdown => Line::from(compact_countdown(row, now, language)),
+                TableColumn::Date => Line::from(row.date.clone()),
+                TableColumn::Place => {
+                    Line::from(Span::styled(row.place.clone(), theme::PLACE_STYLE))
+                }
+            };
+            Cell::from(line)
+        })
+        .collect()
 }
 
 /// Column headers, with the active sort column marked by an arrow.
-fn header_cells(app: &App) -> Vec<Cell<'static>> {
-    let marker = |header: &str| -> Option<char> {
-        match app.sort_column.header() {
-            "" => None,
-            active if active == header => Some(if app.sort_reverse { '▼' } else { '▲' }),
-            _ => None,
-        }
-    };
-
-    COLUMNS
+fn header_cells(app: &App, columns: &[TableColumn]) -> Vec<Cell<'static>> {
+    columns
         .iter()
         .map(|column| {
-            let style = if marker(column).is_some() {
+            let active = column.sort_column() == Some(app.sort_column);
+            let style = if active {
                 theme::TITLE_STYLE
             } else {
                 theme::SECTION_STYLE
             };
-            match marker(column) {
-                Some(arrow) => Cell::from(Line::from(vec![
-                    Span::styled(format!("{column} "), style),
+            let label = column.label(app.language);
+            if active {
+                let arrow = if app.sort_reverse { '▼' } else { '▲' };
+                Cell::from(Line::from(vec![
+                    Span::styled(format!("{label} "), style),
                     Span::styled(arrow.to_string(), style),
-                ])),
-                None => Cell::from(Span::styled(*column, style)),
+                ]))
+            } else {
+                Cell::from(Span::styled(label, style))
             }
         })
         .collect()
 }
 
-fn render_table(frame: &mut Frame, app: &App, area: Rect, now: DateTime<Utc>) {
-    let header = Row::new(header_cells(app)).style(theme::SECTION_STYLE);
-
+fn render_table(
+    frame: &mut Frame,
+    app: &App,
+    view: &mut ViewState,
+    area: Rect,
+    columns: &[TableColumn],
+    now: DateTime<Utc>,
+) {
+    view.sync_table(app);
+    let header = Row::new(header_cells(app, columns)).style(theme::SECTION_STYLE);
     let rows: Vec<Row> = app
         .visible
         .iter()
-        .map(|row| Row::new(row_cells(row, now)).style(theme::BASE))
+        .enumerate()
+        .map(|(index, row)| {
+            let style = if index % 2 == 0 {
+                Style::new().bg(theme::SURFACE)
+            } else {
+                Style::new().bg(theme::SURFACE_DARK)
+            };
+            Row::new(row_cells(row, columns, app.language, now)).style(style)
+        })
         .collect();
 
-    let widths = [
-        Constraint::Length(1),
-        Constraint::Min(18),
-        Constraint::Length(3),
-        Constraint::Length(3),
-        Constraint::Length(4),
-        Constraint::Length(5),
-        Constraint::Length(16),
-        Constraint::Length(16),
-        Constraint::Min(8),
-    ];
+    let range = if app.visible.is_empty() {
+        "0 / 0".to_string()
+    } else {
+        let start = view.table_state.offset() + 1;
+        let end = (view.table_state.offset() + area.height.saturating_sub(3) as usize)
+            .min(app.visible.len());
+        format!("{start}-{end} / {}", app.visible.len())
+    };
+    let title = tr(app.language, "Conferences", "会议");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if app.focus == Focus::Table {
+            Style::new().fg(theme::PRIMARY)
+        } else {
+            theme::DIM
+        })
+        .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE))
+        .title_bottom(Line::from(range).right_aligned());
+    let inner = block.inner(area);
+    view.layout.table_header = Rect::new(inner.x, inner.y, inner.width, 1);
+    view.layout.table_rows = Rect::new(
+        inner.x,
+        inner.y + 1,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
+
+    let widths: Vec<Constraint> = columns
+        .iter()
+        .map(|column| column.width(app.language))
+        .collect();
+    let column_areas = Layout::horizontal(widths.clone())
+        .spacing(1)
+        .split(view.layout.table_header);
+    for (column, column_area) in columns.iter().zip(column_areas.iter()) {
+        if let Some(sort) = column.sort_column() {
+            view.layout.table_columns.push((*column_area, sort));
+        }
+    }
 
     let table = Table::new(rows, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL))
+        .block(block)
+        .column_spacing(1)
         .row_highlight_style(theme::SELECTED_STYLE)
-        .highlight_symbol("");
+        .highlight_symbol(">");
+    frame.render_stateful_widget(table, area, &mut view.table_state);
 
-    let mut state = ratatui::widgets::TableState::new().with_selected(Some(app.selected));
-    frame.render_stateful_widget(table, area, &mut state);
+    if app.visible.is_empty() {
+        let message = if app.is_refreshing {
+            tr(app.language, "Loading conferences...", "正在加载会议...")
+        } else {
+            tr(
+                app.language,
+                "No conferences match. Press Esc to reset filters.",
+                "没有匹配的会议，按 Esc 重置筛选。",
+            )
+        };
+        frame.render_widget(
+            Paragraph::new(message)
+                .alignment(Alignment::Center)
+                .style(theme::DIM),
+            view.layout.table_rows,
+        );
+    } else if app.visible.len() > view.layout.table_rows.height as usize
+        && view.layout.table_rows.height > 0
+    {
+        let mut state = ScrollbarState::new(app.visible.len())
+            .position(view.table_state.offset())
+            .viewport_content_length(view.layout.table_rows.height as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_style(theme::ACCENT)
+                .track_style(theme::DIM),
+            view.layout.table_rows,
+            &mut state,
+        );
+    }
+}
+
+fn render_details(frame: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme::DIM)
+        .title(Span::styled(
+            format!(" {} ", tr(app.language, "Details", "详情")),
+            theme::TITLE_STYLE,
+        ))
+        .style(Style::new().bg(theme::SURFACE));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let Some(row) = app.selected_row() else {
+        frame.render_widget(Paragraph::new("No row selected").style(theme::DIM), inner);
+        return;
+    };
+    let conference = app
+        .service
+        .conferences()
+        .iter()
+        .find(|conference| conference.title == row.title);
+    let year = conference.and_then(|conference| {
+        conference
+            .confs
+            .iter()
+            .find(|conference_year| conference_year.year == row.year)
+    });
+
+    let favorite = if row.is_favorite { "★" } else { "☆" };
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{favorite} {} {}", row.title, row.year),
+            theme::BOLD,
+        )),
+        Line::from(format!(
+            "CCF {}  CORE {}  THCPL {}  {} {}",
+            row.rank,
+            row.core_rank.as_deref().unwrap_or("-"),
+            row.thcpl_rank.as_deref().unwrap_or("-"),
+            tr(app.language, "Category", "分类"),
+            row.sub
+        )),
+        Line::from(format!(
+            "{}: {}    {}: {}",
+            tr(app.language, "Date", "日期"),
+            row.date,
+            tr(app.language, "Place", "地点"),
+            row.place
+        )),
+    ];
+
+    if let Some(year) = year {
+        let deadlines = year
+            .timeline
+            .iter()
+            .map(|timeline| timeline.deadline.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let abstracts = year
+            .timeline
+            .iter()
+            .filter_map(|timeline| timeline.abstract_deadline.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let comments = year
+            .timeline
+            .iter()
+            .filter_map(|timeline| timeline.comment.clone())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        lines.push(Line::from(format!(
+            "{}: {deadlines} ({})",
+            tr(app.language, "Deadline", "截止时间"),
+            year.timezone
+        )));
+        if !abstracts.is_empty() {
+            lines.push(Line::from(format!(
+                "{}: {abstracts}",
+                tr(app.language, "Abstract", "摘要截止")
+            )));
+        }
+        lines.push(Line::from(format!("URL: {}", year.link)));
+        if !comments.is_empty() {
+            lines.push(Line::from(format!(
+                "{}: {comments}",
+                tr(app.language, "Notes", "备注")
+            )));
+        }
+    } else {
+        lines.push(Line::from(format!("URL: {}", row.link)));
+    }
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let keys: &[(&str, &str)] = match app.focus {
-        Focus::Search => &[
-            ("Type", "Search titles"),
-            ("Enter", "Apply"),
-            ("Esc", "Clear"),
+    let language = app.language;
+    let keys: Vec<(&str, &str)> = match app.focus {
+        Focus::Search => vec![
+            ("Type", tr(language, "Search", "输入")),
+            ("Enter", tr(language, "Apply", "应用")),
+            ("Esc", tr(language, "Clear", "清空")),
+            ("Tab", tr(language, "Table", "表格")),
         ],
-        Focus::Sidebar => &[
-            ("↑↓", "Move"),
-            ("Space", "Toggle"),
-            ("Tab", "Table"),
-            ("Enter", "Search"),
-            ("Esc", "Reset"),
-            ("?", "Help"),
-            ("q", "Quit"),
+        Focus::Sidebar => vec![
+            ("↑↓", tr(language, "Move", "移动")),
+            ("Space", tr(language, "Toggle", "切换")),
+            ("/", tr(language, "Search", "搜索")),
+            ("Tab", tr(language, "Table", "表格")),
+            ("?", tr(language, "Help", "帮助")),
+            ("q", tr(language, "Quit", "退出")),
         ],
-        Focus::Table => &[
-            ("j/k", "Move"),
-            ("g/G", "Ends"),
-            ("⏎", "Open"),
-            ("f", "Favorite"),
-            ("s", "Sort"),
-            ("Tab", "Filters"),
-            ("l", "Language"),
-            ("r", "Refresh"),
-            ("Esc", "Reset"),
-            ("?", "Help"),
-            ("q", "Quit"),
+        Focus::Table => vec![
+            ("j/k", tr(language, "Move", "移动")),
+            ("⏎", tr(language, "Open", "打开")),
+            ("/", tr(language, "Search", "搜索")),
+            ("f", tr(language, "Favorite", "收藏")),
+            ("d", tr(language, "Details", "详情")),
+            ("Tab", tr(language, "Filters", "筛选")),
+            ("?", tr(language, "Help", "帮助")),
+            ("q", tr(language, "Quit", "退出")),
         ],
     };
 
-    let line = Line::from(
-        keys.iter()
-            .map(|(key, desc)| Span::raw(format!(" {key} {desc}")))
-            .collect::<Vec<Span>>(),
+    let mut spans = Vec::new();
+    for (key, description) in keys {
+        spans.push(Span::styled(
+            format!(" {key} "),
+            Style::new().fg(theme::TEXT).bg(theme::FOOTER_BG),
+        ));
+        spans.push(Span::styled(
+            format!("{description}  "),
+            theme::FOOTER_STYLE,
+        ));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(theme::FOOTER_STYLE),
+        area,
     );
-    frame.render_widget(Paragraph::new(line).style(theme::FOOTER_STYLE), area);
 }
 
-/// The `?` overlay, ported from `HelpScreen`.
-fn render_help(frame: &mut Frame, area: Rect) {
+/// Keyboard and mouse help, rendered as an opaque modal with a clickable close
+/// region. All other mouse input is blocked while this modal is visible.
+fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
+    let language = app.language;
     let sections: [(&str, &[(&str, &str)]); 3] = [
         (
-            "Navigation",
-            &[("j/k", "Move up/down"), ("g / G", "First / last row")],
-        ),
-        (
-            "Actions",
+            tr(language, "Navigation", "导航"),
             &[
-                ("Enter", "Open conference URL"),
-                ("f", "Toggle favorite"),
-                ("s", "Cycle sort column"),
-                ("S", "Reverse sort"),
-                ("l", "Toggle language"),
-                ("r", "Refresh data"),
-                ("q", "Quit"),
+                ("j/k", tr(language, "Move up/down", "上下移动")),
+                ("g / G", tr(language, "First / last row", "首行 / 末行")),
+                ("Click", tr(language, "Select row", "选择会议")),
+                ("Wheel", tr(language, "Scroll pane", "滚动区域")),
             ],
         ),
         (
-            "Filter",
+            tr(language, "Actions", "操作"),
             &[
-                ("Tab", "Focus sidebar"),
-                ("/", "Search titles"),
-                ("Space", "Toggle checkbox"),
-                ("Esc", "Reset filters"),
+                ("Enter", tr(language, "Open conference URL", "打开会议链接")),
+                ("f", tr(language, "Toggle favorite", "切换收藏")),
+                ("d", tr(language, "Toggle details", "展开 / 收起详情")),
+                ("s / S", tr(language, "Sort / reverse", "排序 / 反向")),
+                ("l", tr(language, "Toggle language", "切换语言")),
+                ("r", tr(language, "Refresh data", "刷新数据")),
+                ("q", tr(language, "Quit", "退出")),
+            ],
+        ),
+        (
+            tr(language, "Filters & Mouse", "筛选与鼠标"),
+            &[
+                ("Tab", tr(language, "Focus sidebar", "聚焦侧栏")),
+                ("/", tr(language, "Search titles", "搜索会议")),
+                ("Space", tr(language, "Toggle checkbox", "切换复选框")),
+                ("Header", tr(language, "Click to sort", "点击表头排序")),
+                ("Esc", tr(language, "Reset filters", "重置筛选")),
             ],
         ),
     ];
 
-    // Title + per-section (blank, heading, rows) + blank + closing hint, plus
-    // the two rows the border takes.
     let content = 1
         + sections
             .iter()
             .map(|(_, rows)| rows.len() + 2)
             .sum::<usize>()
-        + 2;
+        + 3;
     let height = (content + 2) as u16;
-    let width = 52.min(area.width.saturating_sub(2));
+    let width = 64.min(area.width.saturating_sub(2));
     let popup = centered(area, width, height.min(area.height.saturating_sub(2)));
+    view.layout.help = Some(popup);
 
     let mut lines: Vec<Line> = vec![Line::from(Span::styled(
-        "Keyboard Shortcuts",
+        tr(language, "Keyboard & Mouse", "键盘与鼠标"),
         theme::TITLE_STYLE,
     ))];
     for (title, rows) in sections {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(title, theme::SECTION_STYLE)));
-        for (key, desc) in rows {
+        for (key, description) in rows {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {key:<6}"), Style::new().fg(theme::PRIMARY)),
-                Span::raw(*desc),
+                Span::styled(format!("  {key:<7}"), Style::new().fg(theme::PRIMARY)),
+                Span::raw(*description),
             ]));
         }
     }
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "Press ? or Esc to close",
+        tr(language, "Press ? or Esc to close", "按 ? 或 Esc 关闭"),
         theme::DIM,
     )));
 
-    // Clear first so the table underneath does not show through the popup.
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)
@@ -424,11 +862,24 @@ fn render_help(frame: &mut Frame, area: Rect) {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(theme::DIM)
                     .style(theme::BASE.bg(theme::SURFACE))
-                    .title(Span::styled(" Help ", theme::TITLE_STYLE)),
+                    .title(Span::styled(
+                        tr(language, " Help ", " 帮助 "),
+                        theme::TITLE_STYLE,
+                    )),
             ),
         popup,
+    );
+
+    let close = Rect::new(popup.right().saturating_sub(5), popup.y, 4, 1);
+    view.layout.help_close = Some(close);
+    frame.render_widget(
+        Paragraph::new("[x]")
+            .alignment(Alignment::Center)
+            .style(theme::TITLE_STYLE),
+        close,
     );
 }
 
@@ -524,7 +975,7 @@ mod tests {
     #[test]
     fn draws_header_table_and_footer() {
         let mut app = app();
-        let lines = render(&mut app, 100, 24);
+        let lines = render(&mut app, 160, 24);
 
         assert!(contains(&lines, "CCF-Deadlines TUI"), "{lines:?}");
         assert!(contains(&lines, "Showing 2 of 2 conferences"), "{lines:?}");
@@ -592,6 +1043,9 @@ mod tests {
         );
         assert!(contains_compact(&lines, "显示 2 / 2 个会议"), "{lines:?}");
         assert!(contains_compact(&lines, "筛选"), "{lines:?}");
+        assert!(contains_compact(&lines, "倒计时"), "{lines:?}");
+        assert!(contains_compact(&lines, "类别"), "{lines:?}");
+        assert!(contains_compact(&lines, "显示已截止"), "{lines:?}");
     }
 
     #[test]
@@ -600,7 +1054,7 @@ mod tests {
         app.show_help = true;
         let lines = render(&mut app, 120, 40);
 
-        assert!(contains(&lines, "Keyboard Shortcuts"), "{lines:?}");
+        assert!(contains(&lines, "Keyboard & Mouse"), "{lines:?}");
         assert!(contains(&lines, "Toggle favorite"), "{lines:?}");
         assert!(contains(&lines, "Press ? or Esc to close"), "{lines:?}");
         // The underlying UI is still drawn underneath.
@@ -617,7 +1071,7 @@ mod tests {
         // the rows it spans are replaced by help content or blank space.
         let overlay_start = lines
             .iter()
-            .position(|line| line.contains("Keyboard Shortcuts"))
+            .position(|line| line.contains("Keyboard & Mouse"))
             .expect("overlay is drawn");
         let spanned = &lines[overlay_start..(overlay_start + 6).min(lines.len())];
         assert!(
@@ -632,7 +1086,7 @@ mod tests {
         app.show_help = true;
         // Must not panic even when there is no room for the popup.
         let lines = render(&mut app, 60, 12);
-        assert!(contains(&lines, "Keyboard Shortcuts"), "{lines:?}");
+        assert!(contains(&lines, "Keyboard & Mouse"), "{lines:?}");
     }
 
     #[test]

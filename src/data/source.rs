@@ -38,7 +38,9 @@ pub fn parse_conferences(content: &str, origin: &str) -> Result<Vec<Conference>,
     let data: Value = serde_yaml_ng::from_str(content)
         .map_err(|e| DataError::YamlParse(format!("{origin}: {e}")))?;
     match data {
-        Value::Null => Err(DataError::YamlParse(format!("{origin}: empty YAML response"))),
+        Value::Null => Err(DataError::YamlParse(format!(
+            "{origin}: empty YAML response"
+        ))),
         Value::Sequence(items) => Ok(items.iter().map(Conference::from_value).collect()),
         other => Err(DataError::Validation(format!(
             "{origin}: expected a list at the document root, got {}",
@@ -120,10 +122,22 @@ mod tests {
 
     #[test]
     fn rejects_empty_and_non_list_documents() {
-        assert!(matches!(parse_conferences("", "t"), Err(DataError::YamlParse(_))));
-        assert!(matches!(parse_conferences("# only a comment", "t"), Err(DataError::YamlParse(_))));
-        assert!(matches!(parse_conferences("title: x", "t"), Err(DataError::Validation(_))));
-        assert!(matches!(parse_conferences("[unclosed", "t"), Err(DataError::YamlParse(_))));
+        assert!(matches!(
+            parse_conferences("", "t"),
+            Err(DataError::YamlParse(_))
+        ));
+        assert!(matches!(
+            parse_conferences("# only a comment", "t"),
+            Err(DataError::YamlParse(_))
+        ));
+        assert!(matches!(
+            parse_conferences("title: x", "t"),
+            Err(DataError::Validation(_))
+        ));
+        assert!(matches!(
+            parse_conferences("[unclosed", "t"),
+            Err(DataError::YamlParse(_))
+        ));
     }
 
     #[test]
@@ -138,7 +152,10 @@ mod tests {
     #[test]
     fn missing_cache_is_local_error() {
         let dir = tempdir().unwrap();
-        assert!(matches!(read_cache(&dir.path().join("nope.yml")), Err(DataError::Local(_))));
+        assert!(matches!(
+            read_cache(&dir.path().join("nope.yml")),
+            Err(DataError::Local(_))
+        ));
     }
 
     #[test]

@@ -3,11 +3,11 @@
 //!
 //! Run with: `cargo run --example snapshot` (add `-- --help` for the overlay).
 
-use chrono::Utc;
 use ccfddl_tui::data::{DataError, DataService, Favorites};
 use ccfddl_tui::ui;
-use ratatui::backend::TestBackend;
+use chrono::Utc;
 use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 
 fn main() {
     let dir = std::env::temp_dir().join("ccfddl-snapshot");
@@ -24,29 +24,41 @@ fn main() {
         .expect("embedded snapshot must parse");
 
     let mut app = ui::App::new(service);
-        let args: Vec<String> = std::env::args().skip(1).collect();
-        if args.iter().any(|a| a == "--help") {
-            app.show_help = true;
-        }
-        if args.iter().any(|a| a == "--sidebar-bottom") {
-            // Scroll the sidebar to its last entries (search box).
-            app.sidebar_cursor = app.sidebar_controls().len().saturating_sub(1);
-        }
-        if args.iter().any(|a| a == "--zh") {
-            app.toggle_language();
-        }
-        if args.iter().any(|a| a == "--focus-sidebar") {
-            app.focus = ccfddl_tui::ui::Focus::Sidebar;
-        }
-        if args.iter().any(|a| a == "--sort-title") {
-            app.cycle_sort_column();
-            app.status = None;
-        }
-        if args.iter().any(|a| a == "--sort-title-desc") {
-            app.cycle_sort_column();
-            app.toggle_sort_direction();
-            app.status = None;
-        }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help") {
+        app.show_help = true;
+    }
+    if args.iter().any(|a| a == "--sidebar-bottom") {
+        // Scroll the sidebar to its last entries (search box).
+        app.sidebar_cursor = app.sidebar_controls().len().saturating_sub(1);
+    }
+    if args.iter().any(|a| a == "--zh") {
+        app.toggle_language();
+    }
+    if args.iter().any(|a| a == "--focus-sidebar") {
+        app.focus = ccfddl_tui::ui::Focus::Sidebar;
+    }
+    if args.iter().any(|a| a == "--details") {
+        app.show_details = true;
+    }
+    if args.iter().any(|a| a == "--collapse-categories") {
+        app.show_categories = false;
+    }
+    if let Some(index) = args.iter().position(|arg| arg == "--search")
+        && let Some(query) = args.get(index + 1)
+    {
+        app.search_input = query.clone();
+        app.commit_search();
+    }
+    if args.iter().any(|a| a == "--sort-title") {
+        app.cycle_sort_column();
+        app.status = None;
+    }
+    if args.iter().any(|a| a == "--sort-title-desc") {
+        app.cycle_sort_column();
+        app.toggle_sort_direction();
+        app.status = None;
+    }
 
     let (width, height) = (120u16, 32u16);
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

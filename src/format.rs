@@ -31,7 +31,10 @@ pub struct CountdownText {
 
 impl CountdownText {
     fn new(text: impl Into<String>, color: CountdownColor) -> Self {
-        Self { text: text.into(), color }
+        Self {
+            text: text.into(),
+            color,
+        }
     }
 }
 
@@ -59,7 +62,10 @@ pub fn format_time_remaining(days: i64, total_seconds: i64) -> String {
 
     if days >= 1 {
         let hours = total_seconds.div_euclid(3600).rem_euclid(24);
-        format!("{days} {} {hours:02}:{minutes:02}:{seconds:02}", plural(days, "day"))
+        format!(
+            "{days} {} {hours:02}:{minutes:02}:{seconds:02}",
+            plural(days, "day")
+        )
     } else {
         let total_hours = total_seconds.div_euclid(3600);
         format!("{total_hours:02}:{minutes:02}:{seconds:02}")
@@ -169,7 +175,10 @@ mod tests {
 
     #[test]
     fn time_remaining_more_than_a_day() {
-        assert_eq!(format_time_remaining(5, secs(5, 12, 30, 45)), "5 days 12:30:45");
+        assert_eq!(
+            format_time_remaining(5, secs(5, 12, 30, 45)),
+            "5 days 12:30:45"
+        );
     }
 
     #[test]
@@ -202,7 +211,10 @@ mod tests {
         assert_eq!(c.text, "5 days 00:00:00");
         assert_eq!(c.color, CountdownColor::Yellow);
         let soon = format_deadline_countdown(Some(now() + Duration::minutes(90)), false, now());
-        assert_eq!((soon.text.as_str(), soon.color), ("01:30:00", CountdownColor::Red));
+        assert_eq!(
+            (soon.text.as_str(), soon.color),
+            ("01:30:00", CountdownColor::Red)
+        );
     }
 
     #[test]
@@ -219,16 +231,31 @@ mod tests {
         let n = now();
         assert_eq!(format_duration(n - Duration::seconds(1), n), "Expired");
         assert_eq!(format_duration(n, n), "Expired");
-        assert_eq!(format_duration(n + Duration::milliseconds(500), n), "00:00:00");
-        assert_eq!(format_duration(n + Duration::seconds(5 * 3600 + 30 * 60 + 12), n), "05:30:12");
+        assert_eq!(
+            format_duration(n + Duration::milliseconds(500), n),
+            "00:00:00"
+        );
+        assert_eq!(
+            format_duration(n + Duration::seconds(5 * 3600 + 30 * 60 + 12), n),
+            "05:30:12"
+        );
         assert_eq!(format_duration(n + Duration::days(1), n), "01 day, 00:00");
         assert_eq!(
-            format_duration(n + Duration::days(12) + Duration::hours(3) + Duration::minutes(45), n),
+            format_duration(
+                n + Duration::days(12) + Duration::hours(3) + Duration::minutes(45),
+                n
+            ),
             "12 days, 03:45"
         );
         assert_eq!(format_duration(n + Duration::days(30), n), "1 month");
         assert_eq!(format_duration(n + Duration::days(60), n), "2 months");
-        assert_eq!(format_duration(n + Duration::days(65), n), "2 months, 5 days");
-        assert_eq!(format_duration(n + Duration::days(31), n), "1 month, 1 days");
+        assert_eq!(
+            format_duration(n + Duration::days(65), n),
+            "2 months, 5 days"
+        );
+        assert_eq!(
+            format_duration(n + Duration::days(31), n),
+            "1 month, 1 days"
+        );
     }
 }

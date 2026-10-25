@@ -94,8 +94,8 @@ pub fn parse_datetime_with_tz(
     tz_str: &str,
 ) -> Result<DateTime<FixedOffset>, TimezoneError> {
     let tz = get_timezone(tz_str)?;
-    let naive = parse_naive(dt_str)
-        .ok_or_else(|| TimezoneError::InvalidDatetime(dt_str.to_string()))?;
+    let naive =
+        parse_naive(dt_str).ok_or_else(|| TimezoneError::InvalidDatetime(dt_str.to_string()))?;
     let nonexistent =
         || TimezoneError::NonexistentLocalTime(dt_str.to_string(), tz_str.to_string());
 
@@ -141,14 +141,22 @@ mod tests {
 
     #[test]
     fn invalid_timezones() {
-        for bad in ["", "GMT", "UTC+", "UTC8", "UTC+123", "utc+8", "UTC+5:30", "UTC +8", "PST"] {
+        for bad in [
+            "", "GMT", "UTC+", "UTC8", "UTC+123", "utc+8", "UTC+5:30", "UTC +8", "PST",
+        ] {
             assert!(
                 matches!(get_timezone(bad), Err(TimezoneError::InvalidFormat(_))),
                 "{bad} should be invalid"
             );
         }
-        assert_eq!(get_timezone("UTC+15"), Err(TimezoneError::OffsetOutOfRange(15)));
-        assert_eq!(get_timezone("UTC-13"), Err(TimezoneError::OffsetOutOfRange(-13)));
+        assert_eq!(
+            get_timezone("UTC+15"),
+            Err(TimezoneError::OffsetOutOfRange(15))
+        );
+        assert_eq!(
+            get_timezone("UTC-13"),
+            Err(TimezoneError::OffsetOutOfRange(-13))
+        );
     }
 
     #[test]
@@ -186,7 +194,11 @@ mod tests {
     #[test]
     fn flexible_datetime_formats() {
         let expected = parse_deadline_utc("2025-03-01 10:30:00", "UTC").unwrap();
-        for s in ["2025-03-01 10:30", "2025-03-01T10:30:00", "  2025-03-01 10:30:00  "] {
+        for s in [
+            "2025-03-01 10:30",
+            "2025-03-01T10:30:00",
+            "  2025-03-01 10:30:00  ",
+        ] {
             assert_eq!(parse_deadline_utc(s, "UTC").unwrap(), expected, "{s}");
         }
         let midnight = parse_deadline_utc("2025-03-01", "UTC").unwrap();

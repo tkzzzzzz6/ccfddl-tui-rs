@@ -89,7 +89,8 @@ pub fn find_best_conf_year(
         }
     }
 
-    best_year.map(|conf_year| create_row(conf, conf_year, best_deadline, best_is_tbd, now, favorites))
+    best_year
+        .map(|conf_year| create_row(conf, conf_year, best_deadline, best_is_tbd, now, favorites))
 }
 
 pub fn create_row(
@@ -144,11 +145,7 @@ pub(crate) mod fixtures {
         Favorites::empty_at(std::env::temp_dir().join("ccfddl-tui-test-never-written.json"))
     }
 
-    pub fn year(
-        year: i32,
-        timezone: &str,
-        deadlines: &[&str],
-    ) -> ConferenceYear {
+    pub fn year(year: i32, timezone: &str, deadlines: &[&str]) -> ConferenceYear {
         ConferenceYear {
             year,
             id: format!("conf{year}"),
@@ -165,7 +162,11 @@ pub(crate) mod fixtures {
             title: title.into(),
             description: format!("{title} description"),
             sub: "AI".into(),
-            rank: Rank { ccf: "A".into(), core: Some("A*".into()), thcpl: Some("A".into()) },
+            rank: Rank {
+                ccf: "A".into(),
+                core: Some("A*".into()),
+                thcpl: Some("A".into()),
+            },
             dblp: title.to_lowercase(),
             confs,
         }
@@ -220,7 +221,11 @@ mod tests {
     #[test]
     fn tbd_is_case_insensitive() {
         let conf = conference("X", vec![year(2025, "UTC", &["tbd"])]);
-        assert!(find_best_conf_year(&conf, fixed_now(), &no_favorites()).unwrap().is_tbd);
+        assert!(
+            find_best_conf_year(&conf, fixed_now(), &no_favorites())
+                .unwrap()
+                .is_tbd
+        );
     }
 
     #[test]
@@ -235,7 +240,10 @@ mod tests {
         let past = fmt(now - Duration::days(30));
         let conf = conference(
             "ExpiredConf",
-            vec![year(2023, "UTC", &["2023-01-01 00:00:00"]), year(2024, "UTC", &[&past])],
+            vec![
+                year(2023, "UTC", &["2023-01-01 00:00:00"]),
+                year(2024, "UTC", &[&past]),
+            ],
         );
 
         let row = find_best_conf_year(&conf, now, &no_favorites()).unwrap();
@@ -255,12 +263,18 @@ mod tests {
         let conf = conference("Tie", vec![a, b]);
         let row = find_best_conf_year(&conf, fixed_now(), &no_favorites()).unwrap();
         assert_eq!(row.date, "June 2024");
-        assert_eq!(row.deadline.unwrap().to_rfc3339(), "2024-01-01T00:00:00+00:00");
+        assert_eq!(
+            row.deadline.unwrap().to_rfc3339(),
+            "2024-01-01T00:00:00+00:00"
+        );
     }
 
     #[test]
     fn expired_with_tbd_first_timeline_is_tbd() {
-        let conf = conference("X", vec![year(2024, "UTC", &["TBD", "2020-01-01 00:00:00"])]);
+        let conf = conference(
+            "X",
+            vec![year(2024, "UTC", &["TBD", "2020-01-01 00:00:00"])],
+        );
         let row = find_best_conf_year(&conf, fixed_now(), &no_favorites()).unwrap();
         assert!(row.is_tbd);
     }
@@ -321,7 +335,10 @@ mod tests {
     fn unparseable_deadlines_are_skipped() {
         let conf = conference(
             "X",
-            vec![year(2025, "UTC", &["garbage", "2025-06-01 00:00:00"]), year(2026, "Mars", &["2026-01-01 00:00:00"])],
+            vec![
+                year(2025, "UTC", &["garbage", "2025-06-01 00:00:00"]),
+                year(2026, "Mars", &["2026-01-01 00:00:00"]),
+            ],
         );
         let row = find_best_conf_year(&conf, fixed_now(), &no_favorites()).unwrap();
         assert_eq!(row.year, 2025);
@@ -340,16 +357,31 @@ mod tests {
         let conf = conference("VLDB", vec![year(2025, "PT", &["2025-03-01 12:00:00"])]);
         let row = find_best_conf_year(&conf, fixed_now(), &no_favorites()).unwrap();
         assert!(row.is_running);
-        assert_eq!(row.deadline.unwrap().to_rfc3339(), "2025-03-01T20:00:00+00:00");
+        assert_eq!(
+            row.deadline.unwrap().to_rfc3339(),
+            "2025-03-01T20:00:00+00:00"
+        );
     }
 
     #[test]
     fn create_row_running() {
         let conf = sample_conference();
         let now = fixed_now();
-        let row = create_row(&conf, &conf.confs[0], Some(now + Duration::days(10)), false, now, &no_favorites());
+        let row = create_row(
+            &conf,
+            &conf.confs[0],
+            Some(now + Duration::days(10)),
+            false,
+            now,
+            &no_favorites(),
+        );
         assert_eq!(
-            (row.title.as_str(), row.year, row.sub.as_str(), row.rank.as_str()),
+            (
+                row.title.as_str(),
+                row.year,
+                row.sub.as_str(),
+                row.rank.as_str()
+            ),
             ("CVPR", 2025, "AI", "A")
         );
         assert_eq!(row.core_rank.as_deref(), Some("A*"));
@@ -360,7 +392,14 @@ mod tests {
     #[test]
     fn create_row_tbd() {
         let conf = sample_conference_tbd();
-        let row = create_row(&conf, &conf.confs[0], None, true, fixed_now(), &no_favorites());
+        let row = create_row(
+            &conf,
+            &conf.confs[0],
+            None,
+            true,
+            fixed_now(),
+            &no_favorites(),
+        );
         assert!(row.is_tbd && row.is_running && !row.is_expired);
         assert_eq!(row.countdown, "TBD");
     }
@@ -369,7 +408,14 @@ mod tests {
     fn create_row_finished() {
         let conf = sample_conference();
         let now = fixed_now();
-        let row = create_row(&conf, &conf.confs[0], Some(now - Duration::days(10)), false, now, &no_favorites());
+        let row = create_row(
+            &conf,
+            &conf.confs[0],
+            Some(now - Duration::days(10)),
+            false,
+            now,
+            &no_favorites(),
+        );
         assert!(!row.is_running && !row.is_tbd && row.is_expired);
         assert_eq!(row.countdown, "Finished");
     }
@@ -384,7 +430,14 @@ mod tests {
         let row = create_row(&conf, &conf.confs[0], None, false, fixed_now(), &favorites);
         assert!(row.is_favorite);
         let other = conference("CVPR", vec![year(2026, "UTC", &[])]);
-        let row = create_row(&other, &other.confs[0], None, false, fixed_now(), &favorites);
+        let row = create_row(
+            &other,
+            &other.confs[0],
+            None,
+            false,
+            fixed_now(),
+            &favorites,
+        );
         assert!(!row.is_favorite);
     }
 
@@ -399,7 +452,10 @@ mod tests {
             conference("Dated", vec![year(2026, "AoE", &["2026-03-01 23:59:59"])]),
         ];
         let rows = process_rows(&confs, now, &no_favorites());
-        assert_eq!(rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(), ["NeurIPS", "Dated"]);
+        assert_eq!(
+            rows.iter().map(|r| r.title.as_str()).collect::<Vec<_>>(),
+            ["NeurIPS", "Dated"]
+        );
         assert_eq!(
             rows[1].deadline,
             Some(Utc.with_ymd_and_hms(2026, 3, 2, 11, 59, 59).unwrap())

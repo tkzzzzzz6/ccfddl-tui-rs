@@ -7,9 +7,9 @@
 
 use std::collections::BTreeSet;
 
-use chrono::{DateTime, Duration, Utc};
 use ccfddl_tui::data::{ConferenceRow, DataService, Favorites, query};
 use ccfddl_tui::format::format_duration;
+use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 
 const GOLDEN: &str = include_str!("fixtures/golden.json");
@@ -47,7 +47,11 @@ fn pt_titles() -> BTreeSet<String> {
     let mut current = String::new();
     for line in ccfddl_tui::data::source::EMBEDDED_YAML.lines() {
         if let Some(title) = line.strip_prefix("- title: ") {
-            current = title.trim().trim_matches('\'').trim_matches('"').to_string();
+            current = title
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_string();
         } else if line.trim() == "timezone: PT" {
             titles.insert(current.clone());
         }
@@ -86,13 +90,25 @@ fn rows_match_python_except_pt_conferences() {
         assert_eq!(row.rank, py["rank"].as_str().unwrap(), "{ctx} rank");
         assert_eq!(row.core_rank, opt_str(&py["core_rank"]), "{ctx} core");
         assert_eq!(row.thcpl_rank, opt_str(&py["thcpl_rank"]), "{ctx} thcpl");
-        assert_eq!(row.countdown, py["countdown"].as_str().unwrap(), "{ctx} countdown");
+        assert_eq!(
+            row.countdown,
+            py["countdown"].as_str().unwrap(),
+            "{ctx} countdown"
+        );
         assert_eq!(row.place, py["place"].as_str().unwrap(), "{ctx} place");
         assert_eq!(row.date, py["date"].as_str().unwrap(), "{ctx} date");
         assert_eq!(row.link, py["link"].as_str().unwrap(), "{ctx} link");
-        assert_eq!(row.is_running, py["is_running"].as_bool().unwrap(), "{ctx} running");
+        assert_eq!(
+            row.is_running,
+            py["is_running"].as_bool().unwrap(),
+            "{ctx} running"
+        );
         assert_eq!(row.is_tbd, py["is_tbd"].as_bool().unwrap(), "{ctx} tbd");
-        assert_eq!(row.is_expired, py["is_expired"].as_bool().unwrap(), "{ctx} expired");
+        assert_eq!(
+            row.is_expired,
+            py["is_expired"].as_bool().unwrap(),
+            "{ctx} expired"
+        );
 
         let expected_deadline = py["deadline"]
             .as_str()
@@ -114,13 +130,20 @@ fn pt_conferences_now_resolve_where_python_dropped_them() {
     let python = golden["rows_unsorted"].as_array().unwrap();
 
     let mut improved = 0;
-    for (row, py) in rust.iter().zip(python).filter(|(r, _)| pt.contains(&r.title)) {
+    for (row, py) in rust
+        .iter()
+        .zip(python)
+        .filter(|(r, _)| pt.contains(&r.title))
+    {
         // Python can only ever report fewer valid deadlines for these entries.
         if py["deadline"].is_null() && row.deadline.is_some() {
             improved += 1;
         }
     }
-    assert!(improved > 0, "expected PT to turn at least one N/A row into a dated row");
+    assert!(
+        improved > 0,
+        "expected PT to turn at least one N/A row into a dated row"
+    );
 }
 
 #[test]
@@ -131,7 +154,12 @@ fn sorted_order_matches_python_for_non_pt_rows() {
 
     let keep = |keys: Vec<String>| -> Vec<String> {
         keys.into_iter()
-            .filter(|k| !pt.iter().any(|t| k.strip_prefix(t.as_str()).is_some_and(|rest| rest.starts_with('_'))))
+            .filter(|k| {
+                !pt.iter().any(|t| {
+                    k.strip_prefix(t.as_str())
+                        .is_some_and(|rest| rest.starts_with('_'))
+                })
+            })
             .collect()
     };
     let rust_keys = keep(sorted.iter().map(key).collect());
@@ -155,7 +183,12 @@ fn fuzzy_search_matches_python() {
 
     let keep = |keys: Vec<String>| -> Vec<String> {
         keys.into_iter()
-            .filter(|k| !pt.iter().any(|t| k.strip_prefix(t.as_str()).is_some_and(|rest| rest.starts_with('_'))))
+            .filter(|k| {
+                !pt.iter().any(|t| {
+                    k.strip_prefix(t.as_str())
+                        .is_some_and(|rest| rest.starts_with('_'))
+                })
+            })
             .collect()
     };
 
@@ -168,7 +201,10 @@ fn fuzzy_search_matches_python() {
             .iter()
             .map(|k| k.as_str().unwrap().to_string())
             .collect();
-        let actual: Vec<String> = query::fuzzy_search(rows.clone(), q).iter().map(key).collect();
+        let actual: Vec<String> = query::fuzzy_search(rows.clone(), q)
+            .iter()
+            .map(key)
+            .collect();
         assert_eq!(keep(actual), keep(expected), "query {q:?}");
     }
 }
@@ -182,6 +218,10 @@ fn format_duration_matches_python() {
     for pair in durations {
         let secs = pair[0].as_i64().unwrap();
         let expected = pair[1].as_str().unwrap();
-        assert_eq!(format_duration(now + Duration::seconds(secs), now), expected, "{secs}s");
+        assert_eq!(
+            format_duration(now + Duration::seconds(secs), now),
+            expected,
+            "{secs}s"
+        );
     }
 }

@@ -51,7 +51,9 @@ pub fn filter_by_rank(rows: Vec<ConferenceRow>, ranks: &BTreeSet<String>) -> Vec
     if ranks.is_empty() {
         return rows;
     }
-    rows.into_iter().filter(|r| ranks.contains(&r.rank)).collect()
+    rows.into_iter()
+        .filter(|r| ranks.contains(&r.rank))
+        .collect()
 }
 
 /// Rows without a CORE/THCPL rank always pass that rank filter.
@@ -123,16 +125,24 @@ pub fn sort_rows(rows: Vec<ConferenceRow>) -> Vec<ConferenceRow> {
     tbd.sort_by_key(|r| std::cmp::Reverse(r.year));
     finished.sort_by_key(|r| std::cmp::Reverse(r.year));
 
-    favorites.into_iter().chain(running).chain(tbd).chain(finished).collect()
+    favorites
+        .into_iter()
+        .chain(running)
+        .chain(tbd)
+        .chain(finished)
+        .collect()
 }
 
-/// Full pipeline used by the UI: filters, then search, then default ordering.
+/// Full pipeline used by the UI. Without a query, the default conference
+/// ordering applies. During search, relevance order is preserved instead of
+/// being overwritten by the deadline ordering.
 pub fn visible_rows(all: &[ConferenceRow], filters: &FilterState) -> Vec<ConferenceRow> {
-    let mut rows = apply_filters(all.to_vec(), filters);
-    if !filters.query.is_empty() {
-        rows = fuzzy_search(rows, &filters.query);
+    let rows = apply_filters(all.to_vec(), filters);
+    if filters.query.is_empty() {
+        sort_rows(rows)
+    } else {
+        fuzzy_search(rows, &filters.query)
     }
-    sort_rows(rows)
 }
 
 #[cfg(test)]
@@ -156,14 +166,40 @@ mod tests {
 
     impl Spec {
         fn new(title: &'static str) -> Self {
-            Self { title, year: 2025, sub: "AI", rank: "A", days: None, tbd: false, fav: false }
+            Self {
+                title,
+                year: 2025,
+                sub: "AI",
+                rank: "A",
+                days: None,
+                tbd: false,
+                fav: false,
+            }
         }
-        fn year(mut self, year: i32) -> Self { self.year = year; self }
-        fn sub(mut self, sub: &'static str) -> Self { self.sub = sub; self }
-        fn rank(mut self, rank: &'static str) -> Self { self.rank = rank; self }
-        fn days(mut self, days: i64) -> Self { self.days = Some(days); self }
-        fn tbd(mut self) -> Self { self.tbd = true; self }
-        fn fav(mut self) -> Self { self.fav = true; self }
+        fn year(mut self, year: i32) -> Self {
+            self.year = year;
+            self
+        }
+        fn sub(mut self, sub: &'static str) -> Self {
+            self.sub = sub;
+            self
+        }
+        fn rank(mut self, rank: &'static str) -> Self {
+            self.rank = rank;
+            self
+        }
+        fn days(mut self, days: i64) -> Self {
+            self.days = Some(days);
+            self
+        }
+        fn tbd(mut self) -> Self {
+            self.tbd = true;
+            self
+        }
+        fn fav(mut self) -> Self {
+            self.fav = true;
+            self
+        }
 
         fn build(self) -> ConferenceRow {
             let running = self.tbd || self.days.is_some_and(|d| d > 0);
@@ -211,7 +247,10 @@ mod tests {
         ];
         let subs = |v: &[&str]| set_of(v);
         assert_eq!(titles(&filter_by_sub(rows.clone(), &subs(&["AI"]))), ["A1"]);
-        assert_eq!(titles(&filter_by_sub(rows.clone(), &subs(&["AI", "DB"]))), ["A1", "D1"]);
+        assert_eq!(
+            titles(&filter_by_sub(rows.clone(), &subs(&["AI", "DB"]))),
+            ["A1", "D1"]
+        );
         assert_eq!(filter_by_sub(rows.clone(), &subs(&[])).len(), 3);
         assert!(filter_by_sub(rows.clone(), &subs(&["XX"])).is_empty());
         assert!(filter_by_sub(vec![], &subs(&["AI"])).is_empty());
@@ -224,7 +263,10 @@ mod tests {
             Spec::new("B").rank("B").build(),
             Spec::new("C").rank("C").build(),
         ];
-        assert_eq!(titles(&filter_by_rank(rows.clone(), &set_of(&["A", "C"]))), ["A", "C"]);
+        assert_eq!(
+            titles(&filter_by_rank(rows.clone(), &set_of(&["A", "C"]))),
+            ["A", "C"]
+        );
         assert_eq!(filter_by_rank(rows.clone(), &set_of(&[])).len(), 3);
         assert!(filter_by_rank(rows, &set_of(&["N"])).is_empty());
     }
@@ -233,7 +275,13 @@ mod tests {
     fn apply_filters_default_hides_expired() {
         let rows = apply_filters(mixed(), &FilterState::default());
         assert_eq!(titles(&rows), ["Tbd2023", "Soon", "Later", "Tbd2025"]);
-        let all = apply_filters(mixed(), &FilterState { show_expired: true, ..Default::default() });
+        let all = apply_filters(
+            mixed(),
+            &FilterState {
+                show_expired: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(all.len(), 6);
     }
 
@@ -250,7 +298,10 @@ mod tests {
             thcpl_ranks: set_of(&["B"]),
             ..Default::default()
         };
-        let out = apply_filters(vec![none_ranks, core_b, Spec::new("Both").days(5).build()], &filters);
+        let out = apply_filters(
+            vec![none_ranks, core_b, Spec::new("Both").days(5).build()],
+            &filters,
+        );
         assert_eq!(titles(&out), ["NoRanks"]);
     }
 
@@ -289,12 +340,22 @@ mod tests {
             Spec::new("Computer Vision Workshop").build(),
         ];
         let out = fuzzy_search(rows, "Computer Vision");
-        assert_eq!(titles(&out), ["Computer Vision Workshop", "International Conference on Computer Vision"]);
+        assert_eq!(
+            titles(&out),
+            [
+                "Computer Vision Workshop",
+                "International Conference on Computer Vision"
+            ]
+        );
     }
 
     #[test]
     fn fuzzy_substring_beats_similarity_and_tolerates_typos() {
-        let rows = vec![Spec::new("ICDE").build(), Spec::new("ICDCS").build(), Spec::new("Zzzz").build()];
+        let rows = vec![
+            Spec::new("ICDE").build(),
+            Spec::new("ICDCS").build(),
+            Spec::new("Zzzz").build(),
+        ];
         let out = fuzzy_search(rows, "icde");
         assert_eq!(titles(&out)[0], "ICDE");
         let typo = fuzzy_search(vec![Spec::new("NeurIPS").build()], "neurpis");
@@ -302,14 +363,48 @@ mod tests {
     }
 
     #[test]
+    fn visible_rows_preserves_search_relevance() {
+        let rows = vec![
+            Spec::new("DASFAA").days(32).build(),
+            Spec::new("ISCAS").days(1).build(),
+            Spec::new("DSN").days(39).build(),
+        ];
+        let filters = FilterState {
+            query: "dasfaa".to_string(),
+            ..Default::default()
+        };
+
+        let searched = visible_rows(&rows, &filters);
+        assert_eq!(titles(&searched)[0], "DASFAA");
+
+        // The deadline ordering still applies when there is no search query.
+        let unsearched = visible_rows(&rows, &FilterState::default());
+        assert_eq!(titles(&unsearched)[0], "ISCAS");
+    }
+
+    #[test]
     fn sort_groups_in_order() {
         let sorted = sort_rows(mixed());
-        assert_eq!(titles(&sorted), ["Soon", "Later", "Tbd2025", "Tbd2023", "Finished", "OldFinished"]);
+        assert_eq!(
+            titles(&sorted),
+            [
+                "Soon",
+                "Later",
+                "Tbd2025",
+                "Tbd2023",
+                "Finished",
+                "OldFinished"
+            ]
+        );
     }
 
     #[test]
     fn sort_running_by_deadline_ascending() {
-        let rows = vec![Spec::new("c").days(30).build(), Spec::new("a").days(2).build(), Spec::new("b").days(9).build()];
+        let rows = vec![
+            Spec::new("c").days(30).build(),
+            Spec::new("a").days(2).build(),
+            Spec::new("b").days(9).build(),
+        ];
         assert_eq!(titles(&sort_rows(rows)), ["a", "b", "c"]);
     }
 
@@ -321,7 +416,10 @@ mod tests {
             Spec::new("FavSoon").days(5).fav().build(),
             Spec::new("FavTbd").tbd().fav().build(),
         ];
-        assert_eq!(titles(&sort_rows(rows)), ["FavSoon", "FavLater", "FavTbd", "Regular"]);
+        assert_eq!(
+            titles(&sort_rows(rows)),
+            ["FavSoon", "FavLater", "FavTbd", "Regular"]
+        );
     }
 
     #[test]
@@ -343,12 +441,22 @@ mod tests {
             Spec::new("SIGMOD").sub("DB").days(1).build(),
             Spec::new("OldCVPR").days(-3).year(2020).build(),
         ];
-        // Like the Python app, the final default ordering (by deadline) replaces
-        // the search relevance order.
-        let filters = FilterState { query: "cvpr".into(), ..Default::default() };
-        assert_eq!(titles(&visible_rows(&rows, &filters)), ["CVPR Workshop", "CVPR"]);
+        // Search keeps relevance order: the shorter exact substring match
+        // comes first instead of being re-sorted by deadline.
+        let filters = FilterState {
+            query: "cvpr".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            titles(&visible_rows(&rows, &filters)),
+            ["CVPR", "CVPR Workshop"]
+        );
 
-        let filters = FilterState { query: "cvpr".into(), show_expired: true, ..Default::default() };
+        let filters = FilterState {
+            query: "cvpr".into(),
+            show_expired: true,
+            ..Default::default()
+        };
         assert_eq!(visible_rows(&rows, &filters).len(), 3);
     }
 }

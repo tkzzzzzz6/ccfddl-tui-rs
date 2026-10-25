@@ -13,6 +13,7 @@ use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
 use super::browser;
+use super::refresh::RefreshMessage;
 
 pub const SIDEBAR_WIDTH: u16 = 28;
 
@@ -73,6 +74,7 @@ impl Language {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarItem {
     Header(&'static str),
+    CategoriesToggle,
     Category(String),
     CcfRank(String),
     CoreRank(String),
@@ -134,6 +136,9 @@ pub struct App {
     pub search_input: String,
     pub sort_column: SortColumn,
     pub sort_reverse: bool,
+    pub show_categories: bool,
+    pub show_details: bool,
+    pub is_refreshing: bool,
 }
 
 impl App {
@@ -152,6 +157,9 @@ impl App {
             search_input: String::new(),
             sort_column: SortColumn::Default,
             sort_reverse: false,
+            show_categories: true,
+            show_details: false,
+            is_refreshing: false,
         };
         app.reload(Utc::now());
         app
@@ -161,6 +169,33 @@ impl App {
     pub fn reload(&mut self, now: DateTime<Utc>) {
         self.rows = self.service.process_rows(now);
         self.refresh_visible();
+    }
+
+    /// Apply a completed background refresh on the UI thread.
+    pub fn finish_refresh(&mut self, message: RefreshMessage) {
+        self.is_refreshing = false;
+        match message.result {
+            Ok(()) => {
+                let selected = self.selected_row().map(|row| (row.title.clone(), row.year));
+                // A favorite toggled while the request was in flight wins over
+                // the worker's older in-memory copy.
+                let favorites = self.service.favorites().clone();
+                self.service = message.service;
+                self.service.set_favorites(favorites);
+                self.rows = self.service.process_rows(Utc::now());
+                self.refresh_visible();
+                if let Some((title, year)) = selected {
+                    self.select_conference(&title, year);
+                }
+                self.status = Some(match self.language {
+                    Language::En => "Data refreshed".to_string(),
+                    Language::Zh => "数据已刷新".to_string(),
+                });
+            }
+            Err(error) => {
+                self.status = Some(format!("Refresh failed: {error}"));
+            }
+        }
     }
 
     /// Recompute the visible rows and clamp the cursor back into range.
@@ -216,14 +251,37 @@ impl App {
             .iter()
             .position(|c| *c == self.sort_column)
             .unwrap_or(0);
-        self.sort_column = COLUMNS[(index + 1) % COLUMNS.len()];
-        self.sort_reverse = false;
+        let column = COLUMNS[(index + 1) % COLUMNS.len()];
+        self.sort_by_column(column);
+    }
+
+    /// Sort by a specific header. Clicking the active header reverses it;
+    /// choosing a different header starts in ascending order.
+    pub fn sort_by_column(&mut self, column: SortColumn) {
+        let selected = self.selected_row().map(|row| (row.title.clone(), row.year));
+
+        if self.sort_column == column {
+            self.sort_reverse = !self.sort_reverse;
+        } else {
+            self.sort_column = column;
+            self.sort_reverse = false;
+        }
         self.status = Some(match self.sort_column {
             SortColumn::Default => "Sort: default order".to_string(),
-            other => format!("Sort: {}", other.header()),
+            other => format!(
+                "Sort: {} {}",
+                other.header(),
+                if self.sort_reverse {
+                    "descending"
+                } else {
+                    "ascending"
+                }
+            ),
         });
         self.refresh_visible();
-        self.selected = 0;
+        if let Some((title, year)) = selected {
+            self.select_conference(&title, year);
+        }
     }
 
     /// Flip the direction of the active sort.
@@ -231,17 +289,7 @@ impl App {
         if self.sort_column == SortColumn::Default {
             return;
         }
-        self.sort_reverse = !self.sort_reverse;
-        self.status = Some(format!(
-            "Sort: {} {}",
-            self.sort_column.header(),
-            if self.sort_reverse {
-                "descending"
-            } else {
-                "ascending"
-            }
-        ));
-        self.refresh_visible();
+        self.sort_by_column(self.sort_column);
     }
 
     /// Open the selected conference's URL in the default browser.
@@ -285,6 +333,20 @@ impl App {
 
     pub fn toggle_language(&mut self) {
         self.language = self.language.toggled();
+    }
+
+    pub fn toggle_categories(&mut self) {
+        self.show_categories = !self.show_categories;
+        let total = self.sidebar_controls().len();
+        if total > 0 {
+            self.sidebar_cursor = self.sidebar_cursor.min(total - 1);
+        } else {
+            self.sidebar_cursor = 0;
+        }
+    }
+
+    pub fn toggle_details(&mut self) {
+        self.show_details = !self.show_details;
     }
 
     pub fn toggle_category(&mut self, sub: &str) {
@@ -341,6 +403,16 @@ impl App {
 
     pub fn select_previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+    }
+
+    /// Move the selection by an arbitrary amount, clamped to the result set.
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.visible.is_empty() {
+            self.selected = 0;
+            return;
+        }
+        let last = self.visible.len() as isize - 1;
+        self.selected = (self.selected as isize + delta).clamp(0, last) as usize;
     }
 
     pub fn select_first(&mut self) {
@@ -436,6 +508,7 @@ impl App {
             return;
         };
         match item {
+            SidebarItem::CategoriesToggle => self.toggle_categories(),
             SidebarItem::Category(sub) => self.toggle_category(&sub),
             SidebarItem::CcfRank(rank) => self.toggle_ccf_rank(&rank),
             SidebarItem::CoreRank(rank) => self.toggle_core_rank(&rank),
@@ -446,14 +519,11 @@ impl App {
         }
     }
 
-    /// Sidebar entries in display order.
+    /// Sidebar entries in display order. Search stays first so the renderer can
+    /// pin it above the scrollable filter list.
     pub fn sidebar_items(&self) -> Vec<SidebarItem> {
-        let mut items = vec![SidebarItem::Header("Categories")];
-        items.extend(
-            category_items()
-                .into_iter()
-                .map(|(sub, _)| SidebarItem::Category(sub.to_string())),
-        );
+        let mut items = vec![SidebarItem::Search, SidebarItem::Header("Options")];
+        items.push(SidebarItem::ShowExpired);
         items.push(SidebarItem::Header("CCF Ranks"));
         items.extend(
             CCF_RANKS
@@ -472,10 +542,14 @@ impl App {
                 .iter()
                 .map(|r| SidebarItem::ThcplRank((*r).to_string())),
         );
-        items.push(SidebarItem::Header("Options"));
-        items.push(SidebarItem::ShowExpired);
-        items.push(SidebarItem::Header("Search"));
-        items.push(SidebarItem::Search);
+        items.push(SidebarItem::CategoriesToggle);
+        if self.show_categories {
+            items.extend(
+                category_items()
+                    .into_iter()
+                    .map(|(sub, _)| SidebarItem::Category(sub.to_string())),
+            );
+        }
         items
     }
 
@@ -771,6 +845,43 @@ mod tests {
     }
 
     #[test]
+    fn refresh_preserves_favorites_changed_while_loading() {
+        let mut app = app();
+        app.toggle_favorite();
+        assert!(app.service.is_favorite("CVPR", 2030));
+        app.is_refreshing = true;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        std::mem::forget(dir);
+        let mut service = DataService::with_paths(
+            None,
+            path.join("cache.yml"),
+            Favorites::empty_at(path.join("favorites.json")),
+        );
+        service
+            .load_conferences_with(|| Ok(YAML.to_string()))
+            .unwrap();
+        assert!(!service.is_favorite("CVPR", 2030));
+
+        app.finish_refresh(RefreshMessage {
+            service,
+            result: Ok(()),
+        });
+
+        assert!(!app.is_refreshing);
+        assert!(app.service.is_favorite("CVPR", 2030));
+        assert!(
+            app.rows
+                .iter()
+                .find(|row| row.title == "CVPR")
+                .unwrap()
+                .is_favorite
+        );
+        assert_eq!(app.status.as_deref(), Some("Data refreshed"));
+    }
+
+    #[test]
     fn tick_flips_rows_as_deadlines_pass() {
         let mut app = app();
         let deadline = app
@@ -828,8 +939,39 @@ mod tests {
         );
         assert_eq!(count(|i| matches!(i, SidebarItem::ShowExpired)), 1);
         assert_eq!(count(|i| matches!(i, SidebarItem::Search)), 1);
-        assert_eq!(count(|i| matches!(i, SidebarItem::Header(_))), 6);
-        assert_eq!(count(SidebarItem::is_selectable), items.len() - 6);
+        assert_eq!(count(|i| matches!(i, SidebarItem::CategoriesToggle)), 1);
+        assert_eq!(count(|i| matches!(i, SidebarItem::Header(_))), 4);
+        assert_eq!(count(SidebarItem::is_selectable), items.len() - 4);
+        assert!(matches!(items.first(), Some(SidebarItem::Search)));
+    }
+
+    #[test]
+    fn categories_can_be_collapsed_and_restored() {
+        let mut app = app();
+        assert!(app.show_categories);
+        assert_eq!(app.sidebar_controls().len(), 25);
+
+        app.toggle_categories();
+        assert!(!app.show_categories);
+        assert!(
+            !app.sidebar_items()
+                .iter()
+                .any(|item| matches!(item, SidebarItem::Category(_)))
+        );
+        assert!(
+            app.sidebar_items()
+                .iter()
+                .any(|item| matches!(item, SidebarItem::CategoriesToggle))
+        );
+
+        app.toggle_categories();
+        assert_eq!(
+            app.sidebar_items()
+                .iter()
+                .filter(|item| matches!(item, SidebarItem::Category(_)))
+                .count(),
+            CATEGORIES.len()
+        );
     }
 
     #[test]
@@ -894,12 +1036,18 @@ mod tests {
     }
 
     #[test]
-    fn sorting_resets_the_cursor_to_the_top() {
+    fn sorting_preserves_the_selected_conference() {
         let mut app = app();
         app.select_last();
+        let selected = app.selected_row().unwrap().title.clone();
         assert_eq!(app.selected, 1);
+
         app.cycle_sort_column();
-        assert_eq!(app.selected, 0);
+        assert_eq!(app.selected_row().unwrap().title, selected);
+
+        app.toggle_sort_direction();
+        assert!(app.sort_reverse);
+        assert_eq!(app.selected_row().unwrap().title, selected);
     }
 
     #[test]

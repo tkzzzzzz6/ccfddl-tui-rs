@@ -1,7 +1,7 @@
 //! `DataService`: ties sources, favorites and processing together.
 //! Fallback order is remote -> on-disk cache -> embedded snapshot.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
@@ -66,6 +66,16 @@ impl DataService {
         &self.favorites
     }
 
+    pub fn cache_path(&self) -> &Path {
+        &self.cache_path
+    }
+
+    /// Preserve the caller's in-memory favorites when replacing a service
+    /// after a background refresh.
+    pub(crate) fn set_favorites(&mut self, favorites: Favorites) {
+        self.favorites = favorites;
+    }
+
     pub fn is_favorite(&self, title: &str, year: i32) -> bool {
         self.favorites.contains(title, year)
     }
@@ -87,9 +97,9 @@ impl DataService {
     {
         self.last_error = None;
 
-        let remote_error = match fetch().and_then(|body| {
-            parse_conferences(&body, &self.url).map(|confs| (body, confs))
-        }) {
+        let remote_error = match fetch()
+            .and_then(|body| parse_conferences(&body, &self.url).map(|confs| (body, confs)))
+        {
             Ok((body, confs)) => {
                 if let Err(e) = write_cache(&self.cache_path, &body) {
                     log::warn!("Failed to write data cache: {e}");
@@ -164,10 +174,17 @@ mod tests {
 
     #[test]
     fn default_and_custom_url() {
-        assert_eq!(DataService::DEFAULT_URL, "https://ccfddl.github.io/conference/allconf.yml");
+        assert_eq!(
+            DataService::DEFAULT_URL,
+            "https://ccfddl.github.io/conference/allconf.yml"
+        );
         let dir = tempdir().unwrap();
         assert_eq!(service(&dir).url(), "https://example.invalid/allconf.yml");
-        let default = DataService::with_paths(None, dir.path().join("c.yml"), Favorites::empty_at(dir.path().join("f.json")));
+        let default = DataService::with_paths(
+            None,
+            dir.path().join("c.yml"),
+            Favorites::empty_at(dir.path().join("f.json")),
+        );
         assert_eq!(default.url(), DEFAULT_URL);
     }
 
@@ -175,12 +192,17 @@ mod tests {
     fn remote_success_updates_cache() {
         let dir = tempdir().unwrap();
         let mut svc = service(&dir);
-        let confs = svc.load_conferences_with(|| Ok(REMOTE_YAML.to_string())).unwrap();
+        let confs = svc
+            .load_conferences_with(|| Ok(REMOTE_YAML.to_string()))
+            .unwrap();
         assert_eq!(confs.len(), 1);
         assert_eq!(svc.source(), Some(DataSource::Remote));
         assert!(!svc.using_local_data());
         assert_eq!(svc.last_error(), None);
-        assert_eq!(fs::read_to_string(dir.path().join("allconf.yml")).unwrap(), REMOTE_YAML);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("allconf.yml")).unwrap(),
+            REMOTE_YAML
+        );
     }
 
     #[test]
@@ -237,7 +259,8 @@ mod tests {
             blocker.join("allconf.yml"),
             Favorites::empty_at(dir.path().join("f.json")),
         );
-        svc.load_conferences_with(|| Ok(REMOTE_YAML.to_string())).unwrap();
+        svc.load_conferences_with(|| Ok(REMOTE_YAML.to_string()))
+            .unwrap();
         assert_eq!(svc.source(), Some(DataSource::Remote));
     }
 
@@ -245,7 +268,8 @@ mod tests {
     fn process_rows_uses_loaded_data_and_favorites() {
         let dir = tempdir().unwrap();
         let mut svc = service(&dir);
-        svc.load_conferences_with(|| Ok(REMOTE_YAML.to_string())).unwrap();
+        svc.load_conferences_with(|| Ok(REMOTE_YAML.to_string()))
+            .unwrap();
         let now = Utc.with_ymd_and_hms(2025, 1, 15, 12, 0, 0).unwrap();
 
         let rows = svc.process_rows(now);
@@ -283,8 +307,15 @@ mod tests {
 
         let rows = svc.process_rows(now);
         assert!(rows.len() > 200);
-        assert!(rows.iter().all(|r| r.is_running as u8 + r.is_expired as u8 == 1));
+        assert!(
+            rows.iter()
+                .all(|r| r.is_running as u8 + r.is_expired as u8 == 1)
+        );
         assert!(rows.iter().any(|r| r.is_tbd));
-        assert!(rows.iter().filter(|r| r.deadline.is_some_and(|d| d > now)).all(|r| r.is_running));
+        assert!(
+            rows.iter()
+                .filter(|r| r.deadline.is_some_and(|d| d > now))
+                .all(|r| r.is_running)
+        );
     }
 }

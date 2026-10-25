@@ -15,7 +15,10 @@ and duration formatting against a snapshot generated from the Python code.
 | Filtering, fuzzy search, sorting | ported, golden-verified |
 | Favourites (`~/.ccfddl/favorites.json`) | ported, shared file format |
 | Remote / cache / embedded fallback | ported (embedded snapshot is extra) |
-| Terminal UI | ported (ratatui) |
+| Terminal UI | ratatui, keyboard and mouse |
+| Mouse hit testing, wheel scrolling, scrollbars | implemented and covered by `tests/ui_mouse.rs` |
+| Responsive columns and conference details | implemented |
+| Initial load and refresh | asynchronous; the UI remains responsive |
 
 ## Usage
 
@@ -36,6 +39,7 @@ cargo run --release -- --url URL    # custom data source
 | `g` / `G` | First / last row |
 | `Enter` | Open the conference URL in the default browser |
 | `f` | Toggle favourite |
+| `d` | Show / hide conference details |
 | `s` | Cycle the sort column |
 | `S` | Reverse the sort direction |
 | `l` | Toggle language (EN/ZH) |
@@ -71,10 +75,54 @@ with `▲`/`▼` in the table header.
 | `Esc` | Clear and return to the table |
 
 Search is a separate focus mode so that `q`, `r` and `?` reach the text field
-instead of triggering their global shortcuts.
+instead of triggering their global shortcuts. The search field is pinned to the
+top of the sidebar; category filters can be collapsed, and rank filters are
+packed two per row to keep the sidebar compact.
+
+## Mouse
+
+Mouse capture is enabled on startup and disabled during terminal restoration.
+The interface uses the rectangles from the latest frame for hit testing, so
+clicks continue to target the right control after scrolling or resizing.
+
+| Action | Behaviour |
+|--------|-----------|
+| Click a conference row | Select it; click the selected row again to toggle details |
+| Click a table header | Sort ascending; click the same header again to reverse |
+| Click a filter checkbox | Toggle that category, rank or Show Expired |
+| Click Categories | Collapse / expand the category list |
+| Click the search field | Focus search input |
+| Wheel over the table | Move through conferences with a persistent scroll offset |
+| Wheel over the sidebar | Scroll filters independently |
+| Click `[x]` or outside Help | Close the help overlay |
+
+Right-click, drag and mouse motion are intentionally ignored. All mouse actions
+have keyboard equivalents. While mouse capture is active, native terminal text
+selection may require holding `Shift`, depending on the terminal.
+
+## Layout and details
+
+- Width ≥ 140: all nine columns.
+- Width 100–139: title, category, CCF, countdown and date remain visible.
+- Width < 100: a compact title / CCF / countdown table.
+- Title width is capped at 36 cells; remaining space goes to dates and places.
+- Full dates, places, ranks, links, abstract deadlines and comments are available
+  in the optional details panel (`d` or a second click on the selected row).
+- Scrollbars, row ranges, zebra rows, rounded borders, an explicit selected-row
+  marker and an empty-result hint are included.
+- English and Chinese labels share the same layout and functionality.
+
+Initial loading and `r` refreshes run on a worker thread. The current rows stay
+visible during refresh, and favorites changed while the worker is running are
+preserved. `--list` remains a synchronous, non-interactive operation.
 
 ## Intentional differences from the Python app
 
+- **Search results stay in relevance order.** Substring matches score above
+  1.0 and other matches use the same similarity ratio as Python. Unlike the
+  Python app, a non-empty search does not get re-sorted by deadlines, so an exact
+  match such as `DASFAA` stays at the top. Choosing a sort column still applies
+  that explicit ordering.
 - **The cursor follows a re-sorted row.** Favouriting moves a row to the top of
   the list; the cursor follows that row instead of staying on the old index,
   which would otherwise select a different conference.
@@ -95,12 +143,15 @@ instead of triggering their global shortcuts.
 ## Development
 
 ```bash
-cargo test                 # 156 tests, including golden parity
+cargo test                 # unit, golden parity and mouse interaction tests
 cargo clippy --all-targets
-cargo run --example snapshot              # print one rendered frame
-cargo run --example snapshot -- --help     # ... with the help overlay
-cargo run --example snapshot -- --zh       # ... in Chinese
-cargo run --example snapshot -- --sort-title  # ... sorted by title
+cargo run --example snapshot                         # print one rendered frame
+cargo run --example snapshot -- --help                # ... with the help overlay
+cargo run --example snapshot -- --zh                  # ... in Chinese
+cargo run --example snapshot -- --sort-title          # ... sorted by title
+cargo run --example snapshot -- --details             # ... with conference details
+cargo run --example snapshot -- --collapse-categories # ... with compact filters
+cargo run --example snapshot -- --search dasfaa         # ... verify search relevance
 ```
 
 The `snapshot` example renders through `TestBackend`, so it needs no terminal and
@@ -108,3 +159,15 @@ is the quickest way to eyeball a layout change.
 
 `tests/fixtures/gen_golden.py` regenerates `tests/fixtures/golden.json` from the
 Python implementation; re-run it only when the Python behaviour itself changes.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` checks pushes and pull requests with:
+
+- `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` on
+  Ubuntu;
+- `cargo test --all-targets` and `cargo build --release` on both Ubuntu and
+  Windows.
+
+The workflow runs on `main`/`master` pushes, pull requests and manual dispatch.
+It does not push commits or publish releases.
