@@ -23,18 +23,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Determine version and validate tag
+      - name: Determine release version
         id: version
         shell: bash
         run: |
           set -euo pipefail
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
-            cargo_version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
-            if [[ "$version" != "$cargo_version" ]]; then
-              echo "Tag version '$version' does not match Cargo.toml version '$cargo_version'."
-              exit 1
-            fi
           else
             version="manual-${GITHUB_SHA::7}"
           fi
@@ -81,6 +76,23 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
+
+      - name: Apply tag version to package
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v version="$VERSION" '
+            !done && /^version = "/ {
+              sub(/"[^"]+"/, "\"" version "\"")
+              done = 1
+            }
+            { print }
+          ' Cargo.toml > Cargo.toml.release
+          mv Cargo.toml.release Cargo.toml
+          cargo check
 
       - name: Build release binary
         run: cargo build --release --locked

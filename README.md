@@ -178,7 +178,7 @@ It does not push commits or publish releases.
 
 `.github/workflows/release.yml` provides on-demand binary delivery:
 
-- Pushing a `v*.*.*` tag verifies that the tag matches `Cargo.toml`, runs the
+- Pushing a `v*.*.*` tag derives the package version from the tag, runs the
   full validation suite, packages native Windows, Linux and macOS binaries, and
   creates a **public** GitHub Release with SHA256 checksums.
 - Manual dispatch builds and uploads the same packages as Actions artifacts but
@@ -186,10 +186,11 @@ It does not push commits or publish releases.
 - Only the final release job has `contents: write`; build and verification
   jobs keep read-only permissions.
 
-Before publishing, update `Cargo.toml` and the changelog, then push the tag.
-The workflow publishes the Release automatically after all checks and builds
-succeed; no draft approval is required. No crates.io, container or nightly
-publication is configured. Release packages include `README.md` and `LICENSE`
+Before publishing, update the changelog and push a version tag. CI injects the
+tag version into `Cargo.toml` and `Cargo.lock` during packaging, so you do not
+need to bump them manually for each release. This CI-only update is not
+committed back; building directly from a branch still uses the version written
+in `Cargo.toml`. No crates.io, container or nightly publication is configured. Release packages include `README.md` and `LICENSE`
 when present.
 
 Each Release includes both compressed packages and raw executables, so users

@@ -106,8 +106,10 @@ terminal, mouse, packaging, or process-execution changes.
 Pull requests and branch pushes run `.github/workflows/ci.yml`. Release builds
 use `.github/workflows/release.yml` and are intentionally separate.
 
-Manual Release-workflow runs produce test artifacts only. A `v*.*.*` tag must
-match `Cargo.toml`; it creates a public GitHub Release after validation and native
+Manual Release-workflow runs produce test artifacts only. A `v*.*.*` tag
+determines the package version, which CI applies during the build; you do not
+need to edit `Cargo.toml` for every release. It creates a public GitHub Release
+after validation and native
 Windows/Linux/macOS builds. No draft approval is required. Raw executables are
 attached alongside the compressed packages, with SHA256 checksums for both.
 Do not publish
