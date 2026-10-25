@@ -171,3 +171,19 @@ Python implementation; re-run it only when the Python behaviour itself changes.
 
 The workflow runs on `main`/`master` pushes, pull requests and manual dispatch.
 It does not push commits or publish releases.
+
+## Release workflow
+
+`.github/workflows/release.yml` provides on-demand binary delivery:
+
+- Pushing a `v*.*.*` tag verifies that the tag matches `Cargo.toml`, runs the
+  full validation suite, packages native Windows, Linux and macOS binaries, and
+  creates a **draft** GitHub Release with SHA256 checksums.
+- Manual dispatch builds and uploads the same packages as Actions artifacts but
+  does not create a Release, making it suitable for pre-release testing.
+- Only the final draft-release job has `contents: write`; build and verification
+  jobs keep read-only permissions.
+
+Before publishing, update `Cargo.toml` and the changelog, push the tag, then
+review the draft and its downloaded packages. No crates.io, container or nightly
+publication is configured.
