@@ -9,6 +9,23 @@ upstream Python/Textual implementation and is verified by `tests/golden.rs`,
 which compares rows, sort order, fuzzy search and duration formatting against
 snapshots generated from the upstream code.
 
+## Demo
+
+These images are rendered from real application frames using the embedded
+conference data.
+
+### Main interface
+
+![CCF-Deadlines main interface](assets/demo-main.png)
+
+### Relevance-first search
+
+![CVPR ranked first in search results](assets/demo-search.png)
+
+### Conference details
+
+![CVPR conference details and deadline information](assets/demo-details.png)
+
 ## Status
 
 | Area | State |
@@ -157,7 +174,10 @@ cargo run --example snapshot -- --search dasfaa         # ... verify search rele
 ```
 
 The `snapshot` example renders through `TestBackend`, so it needs no terminal and
-is the quickest way to eyeball a layout change.
+is the quickest way to eyeball a layout change. The README demo images are real
+application-window screenshots, not generated previews. To refresh them, capture
+the main, search and details views and save the PNGs as `assets/demo-main.png`,
+`assets/demo-search.png`, and `assets/demo-details.png`.
 
 `tests/fixtures/gen_golden.py` regenerates `tests/fixtures/golden.json` from the
 Python implementation; re-run it only when the Python behaviour itself changes.
