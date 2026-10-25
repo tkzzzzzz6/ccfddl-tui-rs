@@ -107,8 +107,8 @@ Pull requests and branch pushes run `.github/workflows/ci.yml`. Release builds
 use `.github/workflows/release.yml` and are intentionally separate.
 
 Manual Release-workflow runs produce test artifacts only. A `v*.*.*` tag must
-match `Cargo.toml`; it creates a draft GitHub Release after validation and native
-Windows/Linux/macOS builds. Review the draft before publishing it. Do not publish
+match `Cargo.toml`; it creates a public GitHub Release after validation and native
+Windows/Linux/macOS builds. No draft approval is required. Do not publish
 nightly builds or upload build artifacts to source control.
 
 ## License

@@ -2,10 +2,12 @@
 
 A terminal UI for tracking CCF-ranked conference deadlines with live countdowns.
 
-This is a Rust port of the Python/Textual app in [`d:\develop\tui`](../tui). The
-data layer is kept behaviour-compatible with the Python original and is verified
-against it by `tests/golden.rs`, which compares rows, sort order, fuzzy search
-and duration formatting against a snapshot generated from the Python code.
+This repository is an independently maintained derivative of
+[ccfddl/tui](https://github.com/ccfddl/tui), reimplemented in Rust with a
+ratatui interface. The data layer preserves behaviour compatibility with the
+upstream Python/Textual implementation and is verified by `tests/golden.rs`,
+which compares rows, sort order, fuzzy search and duration formatting against
+snapshots generated from the upstream code.
 
 ## Status
 
@@ -178,14 +180,15 @@ It does not push commits or publish releases.
 
 - Pushing a `v*.*.*` tag verifies that the tag matches `Cargo.toml`, runs the
   full validation suite, packages native Windows, Linux and macOS binaries, and
-  creates a **draft** GitHub Release with SHA256 checksums.
+  creates a **public** GitHub Release with SHA256 checksums.
 - Manual dispatch builds and uploads the same packages as Actions artifacts but
   does not create a Release, making it suitable for pre-release testing.
-- Only the final draft-release job has `contents: write`; build and verification
+- Only the final release job has `contents: write`; build and verification
   jobs keep read-only permissions.
 
-Before publishing, update `Cargo.toml` and the changelog, push the tag, then
-review the draft and its downloaded packages. No crates.io, container or nightly
+Before publishing, update `Cargo.toml` and the changelog, then push the tag.
+The workflow publishes the Release automatically after all checks and builds
+succeed; no draft approval is required. No crates.io, container or nightly
 publication is configured. Release packages include `README.md` and `LICENSE`
 when present.
 
