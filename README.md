@@ -192,6 +192,24 @@ succeed; no draft approval is required. No crates.io, container or nightly
 publication is configured. Release packages include `README.md` and `LICENSE`
 when present.
 
+Each Release includes both compressed packages and raw executables, so users
+can either extract an archive or download a binary directly:
+
+- `ccfddl-tui-<version>-windows-<arch>.zip` and `.exe`;
+- `ccfddl-tui-<version>-linux-<arch>.tar.gz` and the raw Linux binary;
+- `ccfddl-tui-<version>-macos-<arch>.tar.gz` and the raw macOS binary.
+
+The `SHA256SUMS` file covers both forms. On Linux and macOS, make the raw binary
+executable after downloading it:
+
+```bash
+chmod +x ccfddl-tui
+./ccfddl-tui
+```
+
+If the downloaded filename includes the version and architecture, keep that
+filename in the `chmod` command or rename it to `ccfddl-tui` first.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development, testing, commit and

@@ -108,7 +108,9 @@ use `.github/workflows/release.yml` and are intentionally separate.
 
 Manual Release-workflow runs produce test artifacts only. A `v*.*.*` tag must
 match `Cargo.toml`; it creates a public GitHub Release after validation and native
-Windows/Linux/macOS builds. No draft approval is required. Do not publish
+Windows/Linux/macOS builds. No draft approval is required. Raw executables are
+attached alongside the compressed packages, with SHA256 checksums for both.
+Do not publish
 nightly builds or upload build artifacts to source control.
 
 ## License

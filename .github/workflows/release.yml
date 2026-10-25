@@ -95,6 +95,8 @@ jobs:
           $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
           $name = "ccfddl-tui-$env:VERSION-windows-$arch"
           $archive = "$name.zip"
+          $binary = "$name.exe"
+          Copy-Item "target/release/ccfddl-tui.exe" $binary
           New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
           Copy-Item "target/release/ccfddl-tui.exe" "dist/$name/"
           Copy-Item "README.md" "dist/$name/"
@@ -102,6 +104,8 @@ jobs:
           Compress-Archive -Path "dist/$name/*" -DestinationPath $archive -Force
           $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
           "$hash  $archive" | Out-File -FilePath "SHA256SUMS-windows-$arch" -Encoding utf8NoBOM
+          $binaryHash = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLower()
+          "$binaryHash  $binary" | Out-File -FilePath "SHA256SUMS-windows-$arch" -Append -Encoding utf8NoBOM
           "arch=$arch" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8NoBOM
 
       - name: Package Unix binary
@@ -124,11 +128,16 @@ jobs:
           cp "README.md" "dist/$name/"
           if [[ -f LICENSE ]]; then cp LICENSE "dist/$name/"; fi
           archive="${name}.tar.gz"
+          raw_asset="ccfddl-tui-${VERSION}-${PLATFORM}-${arch}"
+          cp "target/release/ccfddl-tui" "$raw_asset"
+          chmod +x "$raw_asset"
           tar -czf "$archive" -C dist "$name"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$archive" > "SHA256SUMS-${PLATFORM}-${arch}"
+            sha256sum "$raw_asset" >> "SHA256SUMS-${PLATFORM}-${arch}"
           else
             shasum -a 256 "$archive" > "SHA256SUMS-${PLATFORM}-${arch}"
+            shasum -a 256 "$raw_asset" >> "SHA256SUMS-${PLATFORM}-${arch}"
           fi
           echo "arch=$arch" >> "$GITHUB_OUTPUT"
 
@@ -137,8 +146,7 @@ jobs:
         with:
           name: release-${{ matrix.platform }}-${{ steps.package_windows.outputs.arch }}${{ steps.package_unix.outputs.arch }}
           path: |
-            *.zip
-            *.tar.gz
+            ccfddl-tui-*
             SHA256SUMS-*
           if-no-files-found: error
 
@@ -166,7 +174,7 @@ jobs:
         run: |
           set -euo pipefail
           cat dist/SHA256SUMS-* > dist/SHA256SUMS
-          mapfile -t assets < <(find dist -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print | sort)
+          mapfile -t assets < <(find dist -maxdepth 1 -type f -name 'ccfddl-tui-*' -print | sort)
           if [[ ${#assets[@]} -eq 0 ]]; then
             echo "No release packages were found."
             exit 1
