@@ -8,8 +8,13 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
-use crate::agent::llm::{ChatMessage, LlmClient, LlmConfig, OpenAiClient};
+use std::sync::Arc;
+use std::sync::mpsc::Receiver;
+
+use crate::agent::config::Overrides;
+use crate::agent::llm::{ChatMessage, LlmClient, LlmConfig, LlmError, OpenAiClient, list_models};
 use crate::agent::profile::{Profile, normalize_ranks, parse_date, split_list};
+use crate::agent::providers;
 use crate::agent::recommend::RecommendationSet;
 use crate::agent::report::export_markdown;
 use crate::agent::session::AgentEvent;
@@ -18,6 +23,7 @@ use crate::agent::worker::{self, AgentHandle, AgentJob};
 use crate::agent::{Lang, Recommendation};
 use crate::data::ConferenceRow;
 
+use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
 
@@ -127,6 +133,10 @@ pub struct Wizard {
 }
 
 pub type ClientFactory = Box<dyn Fn(&LlmConfig) -> Box<dyn LlmClient>>;
+/// Fetches `GET /models`; runs on a worker thread.
+pub type ModelsFetcher = Arc<dyn Fn(&LlmConfig) -> Result<Vec<String>, LlmError> + Send + Sync>;
+/// Environment lookup, injectable so tests never read real variables.
+pub type EnvLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 pub struct AgentPanel {
     pub open: bool,
@@ -145,10 +155,28 @@ pub struct AgentPanel {
     pub llm: Option<LlmConfig>,
     pub client_factory: ClientFactory,
     pub wizard: Option<Wizard>,
+    /// `/setup` questionnaire for the model connection.
+    pub setup: Option<SetupWizard>,
+    /// Background model-list or connection-test request.
+    pub setup_rx: Option<Receiver<SetupEvent>>,
+    /// Models from the last `/model list`, for `/model set <number>`.
+    pub last_models: Vec<String>,
+    pub config_path: PathBuf,
+    /// CLI overrides, reapplied when switching profiles.
+    pub overrides: Overrides,
+    /// Shown in the welcome message, e.g. a config error at startup.
+    pub notice: Option<String>,
+    pub env: EnvLookup,
+    pub models_fetcher: ModelsFetcher,
 }
 
 impl AgentPanel {
+    /// `config.yaml` defaults to the profile's directory (`~/.ccfddl`).
     pub fn new(profile_path: PathBuf, llm: Option<LlmConfig>) -> Self {
+        let config_path = profile_path
+            .parent()
+            .map(|dir| dir.join("config.yaml"))
+            .unwrap_or_else(|| PathBuf::from("config.yaml"));
         Self {
             open: false,
             input: String::new(),
@@ -164,7 +192,40 @@ impl AgentPanel {
             llm,
             client_factory: Box::new(|config| Box::new(OpenAiClient::new(config.clone()))),
             wizard: None,
+            setup: None,
+            setup_rx: None,
+            last_models: Vec::new(),
+            config_path,
+            overrides: Overrides::default(),
+            notice: None,
+            env: Arc::new(|key| std::env::var(key).ok()),
+            models_fetcher: Arc::new(list_models),
         }
+    }
+
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = path;
+        self
+    }
+
+    pub fn with_overrides(mut self, overrides: Overrides) -> Self {
+        self.overrides = overrides;
+        self
+    }
+
+    pub fn with_notice(mut self, notice: Option<String>) -> Self {
+        self.notice = notice;
+        self
+    }
+
+    /// A request or a `/setup` check is in flight.
+    pub fn is_busy(&self) -> bool {
+        self.handle.is_some() || self.setup_rx.is_some()
+    }
+
+    /// Mask the input while `/setup` asks for an API key.
+    pub fn input_masked(&self) -> bool {
+        self.setup.as_ref().is_some_and(SetupWizard::masks_input)
     }
 
     pub fn is_running(&self) -> bool {
@@ -173,7 +234,7 @@ impl AgentPanel {
 
     pub fn model_label(&self) -> String {
         match &self.llm {
-            Some(config) => config.model.clone(),
+            Some(config) => config.label(),
             None => "offline".to_string(),
         }
     }
@@ -184,12 +245,12 @@ impl AgentPanel {
             .and_then(|set| set.items.get(self.card_cursor))
     }
 
-    fn info(&mut self, text: impl Into<String>) {
+    pub(super) fn info(&mut self, text: impl Into<String>) {
         self.entries.push(Entry::Info(text.into()));
         self.scroll = 0;
     }
 
-    fn error(&mut self, text: impl Into<String>) {
+    pub(super) fn error(&mut self, text: impl Into<String>) {
         self.entries.push(Entry::Error(text.into()));
         self.scroll = 0;
     }
@@ -201,7 +262,7 @@ impl AgentPanel {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    fn ensure_profile(&mut self, lang: Lang) {
+    pub(super) fn ensure_profile(&mut self, lang: Lang) {
         if self.profile_loaded {
             return;
         }
@@ -217,23 +278,52 @@ impl AgentPanel {
     }
 
     fn welcome(&mut self, lang: Lang) {
-        let mode = match &self.llm {
-            Some(config) => match lang {
-                Lang::Zh => format!("模型：{}", config.model),
-                Lang::En => format!("Model: {}", config.model),
-            },
-            None => lang
-                .pick(
-                    "Offline mode: rule-based recommendations. Set CCFDDL_API_KEY to chat with a model.",
-                    "离线模式：使用规则推荐。设置 CCFDDL_API_KEY 后可与模型对话。",
-                )
-                .to_string(),
-        };
         self.info(lang.pick(
             "Tell me what you work on and when the paper will be ready, e.g. \"multimodal LLM, ready 2027-03-01\". Type /help for commands.",
             "说说你的研究方向和论文完成时间，例如「多模态大模型，2027-03-01 写完」。输入 /help 查看命令。",
         ));
-        self.info(mode);
+        match &self.llm {
+            Some(config) => {
+                let text = match lang {
+                    Lang::Zh => {
+                        format!("模型：{}（/model 切换，/config 查看配置）", config.label())
+                    }
+                    Lang::En => format!(
+                        "Model: {} (/model to switch, /config for details)",
+                        config.label()
+                    ),
+                };
+                self.info(text);
+            }
+            None => {
+                if let Some(notice) = self.notice.clone() {
+                    self.error(match lang {
+                        Lang::Zh => format!("模型配置有误，暂用离线模式：{notice}"),
+                        Lang::En => {
+                            format!("Model configuration problem, staying offline: {notice}")
+                        }
+                    });
+                }
+                self.info(lang.pick(
+                    "Offline mode: rule-based recommendations. Type /setup to connect a model.",
+                    "离线模式：使用规则推荐。输入 /setup 即可配置模型。",
+                ));
+                let detected = providers::detect_env_keys(self.env.as_ref());
+                if let Some((preset, var)) = detected.first() {
+                    let text = match lang {
+                        Lang::Zh => format!(
+                            "检测到 {var}：输入 /setup 后连按回车即可启用 {}。",
+                            preset.name_zh
+                        ),
+                        Lang::En => format!(
+                            "Found {var}: type /setup and press Enter through the defaults to use {}.",
+                            preset.name
+                        ),
+                    };
+                    self.info(text);
+                }
+            }
+        }
         if self.profile.is_empty() {
             self.info(lang.pick(
                 "No research profile yet: /init sets one up in a few questions.",
@@ -269,6 +359,10 @@ impl App {
     pub fn submit_agent_input(&mut self) {
         let text = self.agent.input.trim().to_string();
         self.agent.input.clear();
+        if self.agent.setup.is_some() {
+            self.answer_setup(&text);
+            return;
+        }
         if self.agent.wizard.is_some() {
             self.answer_wizard(&text);
             return;
@@ -290,6 +384,8 @@ impl App {
         let lang = self.lang();
         if let Some(handle) = &self.agent.handle {
             handle.cancel();
+        } else if self.agent.setup.is_some() {
+            self.cancel_setup();
         } else if self.agent.wizard.take().is_some() {
             self.agent
                 .info(lang.pick("Profile setup cancelled.", "已取消画像设置。"));
@@ -348,10 +444,11 @@ impl App {
                 events.push(AgentEvent::Failed("agent worker stopped".to_string()));
             }
         }
-        let changed = !events.is_empty();
+        let mut changed = !events.is_empty();
         for event in events {
             self.apply_agent_event(event);
         }
+        changed |= self.poll_setup();
         changed
     }
 
@@ -518,6 +615,8 @@ impl App {
         match name.to_lowercase().as_str() {
             "help" | "h" | "?" => self.agent.info(command_help(lang)),
             "init" => self.start_wizard(),
+            "setup" => self.start_setup(),
+            "config" => self.config_command(),
             "recommend" | "rec" => {
                 // Drop the echoed command; the turn echoes its own prompt.
                 self.agent.entries.pop();
@@ -558,28 +657,6 @@ impl App {
                 Lang::Zh => format!("未知命令 /{other}，输入 /help 查看"),
                 Lang::En => format!("Unknown command /{other}; try /help"),
             }),
-        }
-    }
-
-    fn model_command(&mut self, arg: &str) {
-        let lang = self.lang();
-        match (&mut self.agent.llm, arg.is_empty()) {
-            (None, _) => self.agent.info(lang.pick(
-                "Offline mode. Set CCFDDL_API_KEY (and optionally CCFDDL_BASE_URL, CCFDDL_MODEL) before starting ccfddl-tui to use a model.",
-                "当前为离线模式。启动前设置 CCFDDL_API_KEY（可选 CCFDDL_BASE_URL、CCFDDL_MODEL）即可使用模型。",
-            )),
-            (Some(config), true) => {
-                let text = format!("{} @ {}", config.model, config.base_url);
-                self.agent.info(text);
-            }
-            (Some(config), false) => {
-                config.model = arg.to_string();
-                let text = match lang {
-                    Lang::Zh => format!("本次会话改用模型 {arg}"),
-                    Lang::En => format!("Using model {arg} for this session"),
-                };
-                self.agent.info(text);
-            }
         }
     }
 
@@ -736,7 +813,7 @@ impl App {
 }
 
 pub fn command_help(lang: Lang) -> String {
-    let rows: [(&str, &str, &str); 8] = [
+    let rows: [(&str, &str, &str); 11] = [
         (
             "/recommend [note]",
             "Recommend for your profile",
@@ -750,9 +827,24 @@ pub fn command_help(lang: Lang) -> String {
             "导出推荐为 Markdown",
         ),
         (
-            "/model [name]",
-            "Show or switch the model",
-            "查看或切换模型",
+            "/setup",
+            "Connect a model (provider, key, model)",
+            "配置模型（厂商、Key、模型）",
+        ),
+        (
+            "/model [profile]",
+            "Show or switch saved models",
+            "查看或切换已保存的模型配置",
+        ),
+        (
+            "/model list | set",
+            "List provider models / save one",
+            "列出厂商模型 / 保存所选模型",
+        ),
+        (
+            "/config",
+            "Effective settings and their sources",
+            "查看生效配置及来源",
         ),
         ("/lang", "Switch English / Chinese", "切换中英文"),
         ("/clear", "Clear the conversation", "清空对话"),
@@ -760,7 +852,7 @@ pub fn command_help(lang: Lang) -> String {
     ];
     let mut text = String::from(lang.pick("Commands:", "命令："));
     for (command, en, zh) in rows {
-        text.push_str(&format!("\n  {command:<18} {}", lang.pick(en, zh)));
+        text.push_str(&format!("\n  {command:<19} {}", lang.pick(en, zh)));
     }
     text.push_str(lang.pick(
         "\nKeys: Enter send · Esc stop/close · Tab table · ↑↓ cards · PgUp/PgDn scroll · Ctrl+F favorite · Ctrl+O open link",
@@ -770,7 +862,7 @@ pub fn command_help(lang: Lang) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::agent::llm::Completion;
     use crate::agent::llm::tests::{ScriptedClient, call};
@@ -813,6 +905,8 @@ mod tests {
             .unwrap();
         let mut app = App::new(service);
         app.agent = AgentPanel::new(dir.path().join("profile.yaml"), llm);
+        app.agent.env = Arc::new(|_| None);
+        app.agent.models_fetcher = Arc::new(|_| Ok(vec!["m1".into(), "m2".into()]));
         // Horizon must cover the far-future fixture dates.
         app.agent.profile.horizon_days = 100_000;
         app.agent.profile_loaded = true;
@@ -821,7 +915,7 @@ mod tests {
 
     fn wait(app: &mut App) {
         let start = Instant::now();
-        while app.agent.is_running() {
+        while app.agent.is_busy() {
             app.poll_agent();
             assert!(start.elapsed() < Duration::from_secs(10), "agent hung");
             std::thread::sleep(Duration::from_millis(5));
@@ -876,12 +970,7 @@ mod tests {
 
     #[test]
     fn llm_turn_streams_text_and_tools() {
-        let config = LlmConfig {
-            base_url: "http://localhost".into(),
-            api_key: None,
-            model: "scripted".into(),
-            stream: true,
-        };
+        let config = LlmConfig::new("custom", "http://localhost", "scripted", None);
         let (mut app, _dir) = app_with(Some(config));
         app.agent.client_factory = Box::new(|_| {
             Box::new(ScriptedClient::new(vec![
@@ -920,12 +1009,7 @@ mod tests {
 
     #[test]
     fn llm_errors_are_shown() {
-        let config = LlmConfig {
-            base_url: "http://localhost".into(),
-            api_key: None,
-            model: "scripted".into(),
-            stream: true,
-        };
+        let config = LlmConfig::new("custom", "http://localhost", "scripted", None);
         let (mut app, _dir) = app_with(Some(config));
         app.agent.client_factory = Box::new(|_| Box::new(ScriptedClient::new(vec![])));
         app.open_agent();
@@ -982,9 +1066,7 @@ mod tests {
             matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("profile.yaml"))
         );
         type_and_enter(&mut app, "/model");
-        assert!(
-            matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("CCFDDL_API_KEY"))
-        );
+        assert!(matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("/setup")));
         type_and_enter(&mut app, "/export");
         assert!(matches!(app.agent.entries.last(), Some(Entry::Error(_))));
         type_and_enter(&mut app, "/nope");
@@ -1013,16 +1095,11 @@ mod tests {
 
     #[test]
     fn model_can_be_switched_for_the_session() {
-        let config = LlmConfig {
-            base_url: "http://localhost".into(),
-            api_key: None,
-            model: "a".into(),
-            stream: true,
-        };
+        let config = LlmConfig::new("custom", "http://localhost", "a", None);
         let (mut app, _dir) = app_with(Some(config));
         app.open_agent();
         type_and_enter(&mut app, "/model b");
-        assert_eq!(app.agent.model_label(), "b");
+        assert_eq!(app.agent.model_label(), "custom · b");
     }
 
     #[test]

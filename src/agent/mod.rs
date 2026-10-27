@@ -4,6 +4,8 @@
 //! `--recommend`, `--ask` and the TUI panel:
 //!
 //! - [`recommend`]: offline rule-based scoring (P0, needs no LLM);
+//! - [`config`] / [`providers`]: LLM settings from `config.yaml`, environment
+//!   and CLI flags, with built-in provider presets;
 //! - [`llm`]: OpenAI-compatible chat client with tool calling and streaming;
 //! - [`tools`]: tools the model calls, all backed by the local data layer;
 //! - [`session`]: the agent loop (or the offline fallback) for one user turn;
@@ -12,8 +14,11 @@
 //! Facts shown to the user (deadlines, ranks, places) always come from the
 //! data layer; the model only contributes reasons, directions and risks.
 
+pub mod cli_setup;
+pub mod config;
 pub mod llm;
 pub mod profile;
+pub mod providers;
 pub mod recommend;
 pub mod report;
 pub mod session;

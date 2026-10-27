@@ -181,22 +181,73 @@ ccfddl-tui --profile ./my-profile.yaml --recommend
 
 ### Using a model
 
-Any OpenAI-compatible chat API works (DeepSeek, Qwen/DashScope compatible mode,
-Kimi, OpenAI, Ollama, ...):
+Any OpenAI-compatible chat API works. The quickest way is `/setup` in the
+agent panel (or `ccfddl-tui --setup` in a plain terminal): pick a provider,
+paste the API key (input is hidden), choose a model from the provider's live
+list, and the connection is tested before anything is saved. No environment
+variables are needed.
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `CCFDDL_API_KEY` | none | API key; without it the agent stays offline |
-| `CCFDDL_BASE_URL` | `https://api.deepseek.com/v1` | API base URL; a `localhost` URL needs no key |
-| `CCFDDL_MODEL` | `deepseek-chat` | Model name |
-| `CCFDDL_STREAM` | `1` | Set to `0` to disable streaming |
+| Provider id | Service | Base URL | Key variable |
+|-------------|---------|----------|--------------|
+| `deepseek` | DeepSeek | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| `qwen` | Qwen (Alibaba Cloud DashScope) | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` |
+| `kimi` | Kimi (Moonshot) | `https://api.moonshot.cn/v1` | `MOONSHOT_API_KEY` |
+| `zhipu` | Zhipu GLM | `https://open.bigmodel.cn/api/paas/v4` | `ZHIPUAI_API_KEY` |
+| `siliconflow` | SiliconFlow | `https://api.siliconflow.cn/v1` | `SILICONFLOW_API_KEY` |
+| `openrouter` | OpenRouter | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` |
+| `openai` | OpenAI | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `ollama` | Ollama (local, no key) | `http://localhost:11434/v1` | — |
+| `custom` | any OpenAI-compatible API | you enter it | optional |
+
+Settings live in `~/.ccfddl/config.yaml` (owner-only permissions on Unix).
+Several named configurations can be kept and switched with `/model <name>`:
+
+```yaml
+llm:
+  active: deepseek
+  temperature: 0.3          # optional global defaults
+  timeout_secs: 120
+  proxy: http://127.0.0.1:7890
+  profiles:
+    deepseek:
+      provider: deepseek
+      model: deepseek-flash
+      api_key_env: DEEPSEEK_API_KEY   # recommended: the key stays in the environment
+    lab:
+      provider: custom
+      base_url: https://llm.example.com/v1
+      model: my-model
+      api_key: sk-...                 # only when you chose to save it in /setup
+```
+
+By default `/setup` only records the *name* of the variable holding the key.
+A pasted key is kept for the session unless you explicitly choose to save it.
+Keys are masked everywhere they are shown.
+
+Values are taken in this order: command-line flags (`--llm-profile`,
+`--provider`, `--model`, `--base-url`), then `CCFDDL_API_KEY`,
+`CCFDDL_BASE_URL`, `CCFDDL_MODEL`, `CCFDDL_STREAM`, then the active profile,
+then global values in `config.yaml`, then the provider preset. Without any
+configuration the agent stays offline: variables such as `DEEPSEEK_API_KEY`
+are only detected and offered in `/setup`, never used silently. Once a profile
+names a provider, that provider's standard variable is used as a key fallback.
+
+```bash
+ccfddl-tui --setup                 # interactive setup, add --zh for Chinese
+ccfddl-tui --check-llm             # effective settings and sources, model list, test request
+ccfddl-tui --llm-profile lab       # use another saved configuration for this run
+ccfddl-tui --provider ollama --model qwen2.5:7b --ask "推荐数据库方向的会议"
+```
+
+Errors come with a next step: a rejected key points to `/setup`, an unknown
+model to `/model list`, timeouts to the `proxy` setting. If a model rejects
+tool calling, the request is answered by the offline rules instead.
 
 The model runs a tool loop (at most 8 calls per turn) over `get_profile`,
 `rank_candidates` (the offline scorer), `search_conferences`,
 `get_conference` and `submit_recommendations`. Submitted ids are checked
 against the data; unknown or closed conferences are dropped and data-derived
-risks such as abstract deadlines are always kept. The API key is only read
-from the environment and never written to disk.
+risks such as abstract deadlines are always kept.
 
 ### Agent panel
 
@@ -217,8 +268,11 @@ terminals (≥ 120 columns) and replaces it on narrow ones while focused.
 
 Slash commands: `/recommend [note]`, `/init` (five questions that save the
 profile), `/profile`, `/export [path]` (Markdown, default
-`~/.ccfddl/recommendations-<time>.md`), `/model [name]`, `/lang`, `/clear`,
-`/help`. Clicking a card selects it, a second click shows it in the table, and
+`~/.ccfddl/recommendations-<time>.md`), `/setup` (connect a model),
+`/model` (show saved configurations), `/model <name>` (switch to one, or use a
+model for this session), `/model list` (the provider's models),
+`/model set <number|name>` (switch and save), `/config` (effective settings and
+where each value comes from), `/lang`, `/clear`, `/help`. Clicking a card selects it, a second click shows it in the table, and
 the mouse wheel scrolls the transcript or moves through cards.
 
 ## Intentional differences from the Python app
