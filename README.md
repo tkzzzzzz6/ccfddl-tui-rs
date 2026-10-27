@@ -40,6 +40,23 @@ conference data.
 | Initial load and refresh | asynchronous; the UI remains responsive |
 | Conference recommendation agent | offline rules, optional LLM tool loop, TUI panel |
 
+## Installation
+
+Install with Cargo. This requires a Rust toolchain ([rustup.rs](https://rustup.rs))
+and works on macOS (Apple Silicon and Intel), Linux and Windows:
+
+```bash
+cargo install --git https://github.com/tkzzzzzz6/ccfddl-tui-rs --tag v0.2.0 --locked
+ccfddl-tui --version
+```
+
+To upgrade, run the same command with a newer tag (add `--force` to reinstall
+the same version). To remove it:
+
+```bash
+cargo uninstall ccfddl-tui
+```
+
 ## Usage
 
 ```bash
