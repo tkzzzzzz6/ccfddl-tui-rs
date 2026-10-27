@@ -38,6 +38,7 @@ conference data.
 | Mouse hit testing, wheel scrolling, scrollbars | implemented and covered by `tests/ui_mouse.rs` |
 | Responsive columns and conference details | implemented |
 | Initial load and refresh | asynchronous; the UI remains responsive |
+| Conference recommendation agent | offline rules, optional LLM tool loop, TUI panel |
 
 ## Usage
 
@@ -45,6 +46,8 @@ conference data.
 cargo run --release                 # start the TUI
 cargo run --release -- --list       # print the table and exit
 cargo run --release -- --url URL    # custom data source
+cargo run --release -- --recommend  # print recommendations and exit
+cargo run --release -- --ask "multimodal LLM, ready 2027-03-01" --zh
 ```
 
 ## Keyboard
@@ -135,6 +138,89 @@ Initial loading and `r` refreshes run on a worker thread. The current rows stay
 visible during refresh, and favorites changed while the worker is running are
 preserved. `--list` remains a synchronous, non-interactive operation.
 
+## Recommendation agent
+
+The agent suggests conferences for your research and explains why: each pick
+gets a tier (**stretch** / **main** / **safe**), a reason, a submission
+direction and risks. Deadlines, ranks, places and dates always come from the
+conference data; a model, when configured, only writes the explanations.
+
+### Research profile
+
+The agent reads `~/.ccfddl/profile.yaml`. Create it with `/init` in the agent
+panel, or write a commented template with `--init-profile` and edit it:
+
+```yaml
+interests: ["multimodal LLM", "程序分析"]   # English or Chinese
+categories: []            # CCF categories (AI, DB, SE, ...); empty = inferred
+target_ranks: ["A", "B"]  # better ranks become stretch, worse ones safe picks
+ready_date: '2027-03-01'  # deadlines before this are skipped
+min_days_left: 14         # used when ready_date is not set
+horizon_days: 365
+preferred_places: ["China"]
+avoided_places: []
+include_tbd: true
+```
+
+### Offline mode (no API key)
+
+Without a model the agent scores every open conference on topic match
+(interests mapped to topics such as computer vision, LLMs or security, against
+each venue's focus and CCF category), CCF rank versus your targets, slack
+between the ready date and the deadline, and favorites / place preferences.
+Explanations are generated from templates in English or Chinese. Free text in
+the panel works too: `我做多模态大模型，2027-03-01 能写完` adds those interests
+and that ready date for the request.
+
+```bash
+ccfddl-tui --recommend                       # uses the profile
+ccfddl-tui --recommend --interests "security,LLM" --top 5 --zh
+ccfddl-tui --init-profile                    # write ~/.ccfddl/profile.yaml
+ccfddl-tui --profile ./my-profile.yaml --recommend
+```
+
+### Using a model
+
+Any OpenAI-compatible chat API works (DeepSeek, Qwen/DashScope compatible mode,
+Kimi, OpenAI, Ollama, ...):
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CCFDDL_API_KEY` | none | API key; without it the agent stays offline |
+| `CCFDDL_BASE_URL` | `https://api.deepseek.com/v1` | API base URL; a `localhost` URL needs no key |
+| `CCFDDL_MODEL` | `deepseek-chat` | Model name |
+| `CCFDDL_STREAM` | `1` | Set to `0` to disable streaming |
+
+The model runs a tool loop (at most 8 calls per turn) over `get_profile`,
+`rank_candidates` (the offline scorer), `search_conferences`,
+`get_conference` and `submit_recommendations`. Submitted ids are checked
+against the data; unknown or closed conferences are dropped and data-derived
+risks such as abstract deadlines are always kept. The API key is only read
+from the environment and never written to disk.
+
+### Agent panel
+
+Press `a` in the table or sidebar. The panel opens beside the table on wide
+terminals (≥ 120 columns) and replaces it on narrow ones while focused.
+
+| Key | Action |
+|-----|--------|
+| any character | Type a request (global shortcuts are plain text here) |
+| `Enter` | Send; on an empty input, show the selected card in the table |
+| `↑` / `↓` | Select a recommendation card |
+| `Ctrl+F` | Toggle favourite of the selected card |
+| `Ctrl+O` | Open the selected conference's website |
+| `Ctrl+L` | Toggle language |
+| `PgUp` / `PgDn` | Scroll the transcript |
+| `Esc` | Stop a running request, leave `/init`, clear the input, then close |
+| `Tab` | Back to the table (the panel stays open) |
+
+Slash commands: `/recommend [note]`, `/init` (five questions that save the
+profile), `/profile`, `/export [path]` (Markdown, default
+`~/.ccfddl/recommendations-<time>.md`), `/model [name]`, `/lang`, `/clear`,
+`/help`. Clicking a card selects it, a second click shows it in the table, and
+the mouse wheel scrolls the transcript or moves through cards.
+
 ## Intentional differences from the Python app
 
 - **Search results stay in relevance order.** Substring matches score above
@@ -171,6 +257,7 @@ cargo run --example snapshot -- --sort-title          # ... sorted by title
 cargo run --example snapshot -- --details             # ... with conference details
 cargo run --example snapshot -- --collapse-categories # ... with compact filters
 cargo run --example snapshot -- --search dasfaa         # ... verify search relevance
+cargo run --example snapshot -- --wide --agent "computer vision"  # ... agent panel
 ```
 
 The `snapshot` example renders through `TestBackend`, so it needs no terminal and

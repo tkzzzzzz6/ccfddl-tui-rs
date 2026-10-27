@@ -1,5 +1,6 @@
 //! Core library for the CCF-Deadlines TUI (Rust port).
 
+pub mod agent;
 pub mod data;
 pub mod format;
 pub mod model;

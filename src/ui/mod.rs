@@ -5,6 +5,8 @@
 //! `widgets/countdown.py`). The data layer under [`crate::data`] is shared with
 //! the Python implementation and is verified against it by `tests/golden.rs`.
 
+pub mod agent;
+pub mod agent_view;
 pub mod app;
 pub mod browser;
 pub mod input;
@@ -52,10 +54,16 @@ impl Drop for MouseCaptureGuard {
 ///
 /// The terminal is restored even when the loop exits early, so a panic or an
 /// error never leaves the shell in raw mode.
-pub fn run(service: crate::data::DataService) -> anyhow::Result<()> {
+/// The agent panel reads its research profile from `profile_path` and uses
+/// a model when `CCFDDL_API_KEY` (or a local `CCFDDL_BASE_URL`) is set.
+pub fn run(
+    service: crate::data::DataService,
+    profile_path: std::path::PathBuf,
+) -> anyhow::Result<()> {
+    let agent = agent::AgentPanel::new(profile_path, crate::agent::llm::LlmConfig::from_env());
     let mut terminal = ratatui::init();
     let result = match MouseCaptureGuard::enable() {
-        Ok(_mouse) => event_loop(&mut terminal, App::new(service)),
+        Ok(_mouse) => event_loop(&mut terminal, App::with_agent(service, agent)),
         Err(error) => Err(error.into()),
     };
     ratatui::restore();
@@ -70,12 +78,16 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
 
     loop {
         poll_refresh(&mut app, &mut refresh_receiver);
+        app.poll_agent();
         terminal.draw(|frame| render::draw_with_view(frame, &mut app, &mut view, Utc::now()))?;
 
         // A short timeout keeps the countdown ticking without busy-waiting;
         // refresh completion is polled more frequently while a worker is active.
         let tick_timeout = TICK.saturating_sub(last_tick.elapsed());
-        let timeout = if app.is_refreshing {
+        let timeout = if app.agent.is_running() {
+            // Streamed agent text should appear promptly.
+            tick_timeout.min(Duration::from_millis(40))
+        } else if app.is_refreshing {
             tick_timeout.min(Duration::from_millis(100))
         } else {
             tick_timeout

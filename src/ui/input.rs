@@ -47,6 +47,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Outcome {
         Focus::Search => search_key(app, key),
         Focus::Sidebar => sidebar_key(app, key),
         Focus::Table => table_key(app, key),
+        Focus::Agent => agent_key(app, key),
     }
 }
 
@@ -66,6 +67,7 @@ fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('l') => app.toggle_language(),
         KeyCode::Char('d') => app.toggle_details(),
         KeyCode::Char('s') => app.cycle_sort_column(),
+        KeyCode::Char('a') => app.open_agent(),
         KeyCode::Char('S') => app.toggle_sort_direction(),
         KeyCode::Enter => {
             app.open_selected_url();
@@ -87,6 +89,7 @@ fn sidebar_key(app: &mut App, key: KeyEvent) -> Outcome {
             app.reset_filters();
             app.focus = Focus::Table;
         }
+        KeyCode::Char('a') => app.open_agent(),
         // Space/Enter toggle the checkbox under the sidebar cursor.
         KeyCode::Char(' ') | KeyCode::Enter => app.toggle_sidebar_item(),
         KeyCode::Down | KeyCode::Char('j') => app.move_sidebar_cursor(1),
@@ -118,6 +121,36 @@ fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
     Outcome::Continue
 }
 
+/// Agent panel: printable keys go to the input, like the search field.
+/// Card actions use Ctrl so they never collide with typing.
+fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => app.agent_escape(),
+        KeyCode::Enter => app.submit_agent_input(),
+        KeyCode::Backspace => {
+            app.agent.input.pop();
+        }
+        KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Table,
+        KeyCode::Up => app.move_card(-1),
+        KeyCode::Down => app.move_card(1),
+        KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
+        KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
+        KeyCode::Char('f') if ctrl => app.toggle_card_favorite(),
+        KeyCode::Char('o') if ctrl => {
+            app.open_card_url();
+        }
+        KeyCode::Char('l') if ctrl => app.toggle_language(),
+        KeyCode::Char(_) if ctrl => {}
+        KeyCode::Char(c) => app.agent.input.push(c),
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Transcript lines moved by PageUp / PageDown.
+const AGENT_PAGE: isize = 8;
+
 /// Route a mouse event through the hit map produced by the latest render.
 /// Keyboard and mouse actions deliberately share the same `App` methods.
 pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> Outcome {
@@ -146,7 +179,11 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         _ => 0,
     };
     if scroll != 0 {
-        if view.layout.table.contains(point) {
+        if view.layout.agent_transcript.contains(point) {
+            app.scroll_transcript(-scroll);
+        } else if view.layout.agent_cards_area.contains(point) {
+            app.move_card(scroll.signum());
+        } else if view.layout.table.contains(point) {
             view.scroll_table(app, scroll);
         } else if view.layout.sidebar.contains(point) {
             view.scroll_sidebar(scroll);
@@ -155,6 +192,27 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
     }
 
     if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        return Outcome::Continue;
+    }
+
+    if let Some(&(_, index)) = view
+        .layout
+        .agent_cards
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        // First click selects a card, a second click shows it in the table.
+        if app.focus == Focus::Agent && app.agent.card_cursor == index {
+            app.jump_to_card();
+            view.sync_table(app);
+        } else {
+            app.agent.card_cursor = index;
+            app.focus = Focus::Agent;
+        }
+        return Outcome::Continue;
+    }
+    if view.layout.agent.is_some_and(|area| area.contains(point)) {
+        app.focus = Focus::Agent;
         return Outcome::Continue;
     }
 
@@ -258,7 +316,10 @@ mod tests {
         service
             .load_conferences_with(|| Ok(YAML.to_string()))
             .unwrap();
-        App::new(service)
+        App::with_agent(
+            service,
+            crate::ui::agent::AgentPanel::new(path.join("profile.yaml"), None),
+        )
     }
 
     fn press(app: &mut App, code: KeyCode) -> Outcome {
@@ -529,6 +590,62 @@ mod tests {
         press(&mut app, KeyCode::Char('s'));
         // Cycling resets the direction.
         assert!(!app.sort_reverse);
+    }
+
+    fn press_ctrl(app: &mut App, c: char) -> Outcome {
+        handle_key(
+            app,
+            KeyEvent {
+                code: KeyCode::Char(c),
+                modifiers: KeyModifiers::CONTROL,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            },
+        )
+    }
+
+    #[test]
+    fn a_opens_the_agent_and_typing_goes_to_its_input() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.focus, Focus::Agent);
+        assert!(app.agent.open);
+        // Global shortcuts are literal text in the agent input.
+        for c in "qr?a".chars() {
+            assert_eq!(press(&mut app, KeyCode::Char(c)), Outcome::Continue);
+        }
+        assert_eq!(app.agent.input, "qr?a");
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.agent.input, "qr?");
+        // Ctrl chords are not typed.
+        press_ctrl(&mut app, 'f');
+        assert_eq!(app.agent.input, "qr?");
+
+        // Esc clears the input, a second Esc closes the panel.
+        press(&mut app, KeyCode::Esc);
+        assert!(app.agent.input.is_empty());
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.agent.open);
+        assert_eq!(app.focus, Focus::Table);
+    }
+
+    #[test]
+    fn tab_leaves_the_agent_open_and_a_returns_to_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::Table);
+        assert!(app.agent.open);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.focus, Focus::Agent);
+    }
+
+    #[test]
+    fn ctrl_c_still_quits_from_the_agent() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(press_ctrl(&mut app, 'c'), Outcome::Quit);
     }
 
     #[test]
