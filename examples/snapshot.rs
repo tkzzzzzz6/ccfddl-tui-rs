@@ -23,8 +23,12 @@ fn main() {
         .load_conferences_with(|| Err(DataError::Remote("offline".into())))
         .expect("embedded snapshot must parse");
 
-    let mut app = ui::App::new(service);
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // The agent panel reads (and /init writes) its profile in the temp dir.
+    let mut app = ui::App::with_agent(
+        service,
+        ui::agent::AgentPanel::new(dir.join("profile.yaml"), None),
+    );
     if args.iter().any(|a| a == "--help") {
         app.show_help = true;
     }
@@ -60,7 +64,27 @@ fn main() {
         app.status = None;
     }
 
-    let (width, height) = (120u16, 32u16);
+    // `--agent "question"` opens the panel and runs one offline turn.
+    if let Some(index) = args.iter().position(|arg| arg == "--agent") {
+        app.open_agent();
+        if let Some(question) = args.get(index + 1).filter(|q| !q.starts_with("--")) {
+            app.agent.input = question.clone();
+            app.submit_agent_input();
+            while app.agent.is_running() {
+                app.poll_agent();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+    if args.iter().any(|a| a == "--card-2") {
+        app.move_card(1);
+    }
+
+    let (width, height) = if args.iter().any(|a| a == "--wide") {
+        (160u16, 44u16)
+    } else {
+        (120u16, 32u16)
+    };
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| ui::render::draw(frame, &mut app, Utc::now()))

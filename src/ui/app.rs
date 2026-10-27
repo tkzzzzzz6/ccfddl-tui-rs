@@ -12,8 +12,10 @@ use crate::data::{ConferenceRow, DataService};
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
+use super::agent::AgentPanel;
 use super::browser;
 use super::refresh::RefreshMessage;
+use crate::agent::profile::default_profile_path;
 
 pub const SIDEBAR_WIDTH: u16 = 28;
 
@@ -46,6 +48,8 @@ pub enum Focus {
     Table,
     Sidebar,
     Search,
+    /// Text input of the agent panel.
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,10 +143,18 @@ pub struct App {
     pub show_categories: bool,
     pub show_details: bool,
     pub is_refreshing: bool,
+    /// Conference recommendation agent (`a`).
+    pub agent: AgentPanel,
 }
 
 impl App {
+    /// An app whose agent panel uses the default profile path and runs
+    /// offline. The profile is only read when the panel is first opened.
     pub fn new(service: DataService) -> Self {
+        Self::with_agent(service, AgentPanel::new(default_profile_path(), None))
+    }
+
+    pub fn with_agent(service: DataService, agent: AgentPanel) -> Self {
         let mut app = Self {
             service,
             filters: FilterState::default(),
@@ -160,6 +172,7 @@ impl App {
             show_categories: true,
             show_details: false,
             is_refreshing: false,
+            agent,
         };
         app.reload(Utc::now());
         app
@@ -424,28 +437,15 @@ impl App {
     }
 
     /// Toggle the favourite flag of the selected row and persist it.
+    ///
+    /// Favourites jump to the top of the list, so the cursor stays on the row
+    /// the user acted on instead of whatever slid into the old slot.
     pub fn toggle_favorite(&mut self) {
         let Some(row) = self.selected_row().cloned() else {
             self.status = Some("No row selected".to_string());
             return;
         };
-
-        let outcome = self.service.toggle_favorite(&row);
-        for candidate in &mut self.rows {
-            if candidate.title == row.title && candidate.year == row.year {
-                candidate.is_favorite = outcome.is_favorite;
-            }
-        }
-        self.status = match outcome.save_error {
-            Some(error) => Some(format!("Favorites not saved: {error}")),
-            None if outcome.is_favorite => Some(format!("{} added to favorites", row.title)),
-            None => Some(format!("{} removed from favorites", row.title)),
-        };
-        self.refresh_visible();
-        // Favourites jump to the top of the list, so keep the cursor on the row
-        // the user acted on instead of leaving it on whatever slid into the
-        // old slot.
-        self.select_conference(&row.title, row.year);
+        self.toggle_favorite_of(&row.title, row.year);
     }
 
     /// Move the cursor onto a specific conference, if it is still visible.

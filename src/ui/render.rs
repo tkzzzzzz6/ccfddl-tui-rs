@@ -17,6 +17,7 @@ use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
+use super::agent_view;
 use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
 use super::theme;
 use super::view::{LayoutMap, ViewState};
@@ -199,6 +200,30 @@ fn render_body(
         (area, None)
     };
     view.layout.details = details;
+
+    // The agent panel sits beside the table on wide terminals and replaces
+    // it on narrow ones while it has focus.
+    let (main, agent_area) = if !app.agent.open {
+        (main, None)
+    } else if main.width >= 120 {
+        let panel_width = (main.width * 42 / 100).max(46);
+        let [left, right] =
+            Layout::horizontal([Constraint::Min(60), Constraint::Length(panel_width)]).areas(main);
+        (left, Some(right))
+    } else if app.focus == Focus::Agent {
+        (Rect::default(), Some(main))
+    } else {
+        (main, None)
+    };
+    if let Some(agent_area) = agent_area {
+        agent_view::render_agent(frame, app, view, agent_area, now);
+    }
+    if main.width == 0 {
+        if let Some(details) = details {
+            render_details(frame, app, details);
+        }
+        return;
+    }
 
     let sidebar_width = if main.width < 100 { 24 } else { SIDEBAR_WIDTH };
     let [sidebar, table] =
@@ -756,12 +781,22 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("?", tr(language, "Help", "帮助")),
             ("q", tr(language, "Quit", "退出")),
         ],
+        Focus::Agent => vec![
+            ("⏎", tr(language, "Send", "发送")),
+            ("↑↓", tr(language, "Cards", "选卡片")),
+            ("^F", tr(language, "Favorite", "收藏")),
+            ("^O", tr(language, "Open", "官网")),
+            ("Esc", tr(language, "Stop/Close", "中断/关闭")),
+            ("Tab", tr(language, "Table", "表格")),
+            ("/help", tr(language, "Commands", "命令")),
+        ],
         Focus::Table => vec![
             ("j/k", tr(language, "Move", "移动")),
             ("⏎", tr(language, "Open", "打开")),
             ("/", tr(language, "Search", "搜索")),
             ("f", tr(language, "Favorite", "收藏")),
             ("d", tr(language, "Details", "详情")),
+            ("a", tr(language, "Agent", "推荐助手")),
             ("Tab", tr(language, "Filters", "筛选")),
             ("?", tr(language, "Help", "帮助")),
             ("q", tr(language, "Quit", "退出")),
@@ -806,6 +841,10 @@ fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
                 ("f", tr(language, "Toggle favorite", "切换收藏")),
                 ("d", tr(language, "Toggle details", "展开 / 收起详情")),
                 ("s / S", tr(language, "Sort / reverse", "排序 / 反向")),
+                (
+                    "a",
+                    tr(language, "Ask the recommendation agent", "打开会议推荐助手"),
+                ),
                 ("l", tr(language, "Toggle language", "切换语言")),
                 ("r", tr(language, "Refresh data", "刷新数据")),
                 ("q", tr(language, "Quit", "退出")),

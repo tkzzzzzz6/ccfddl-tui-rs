@@ -15,6 +15,15 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
 - `src/ui/input.rs` routes keyboard and mouse input through the same `App`
   methods. Do not duplicate business logic for different input methods.
 - `src/ui/refresh.rs` performs network loading off the UI thread.
+- `src/agent/` is the conference recommendation agent and must not depend on
+  `src/ui`: `recommend.rs` (offline rule scoring), `topics.rs` (interest and
+  venue topics), `profile.rs` (`~/.ccfddl/profile.yaml`), `llm.rs`
+  (OpenAI-compatible client behind the `LlmClient` trait), `tools.rs`,
+  `session.rs` (tool loop) and `worker.rs` (background thread).
+- `src/ui/agent.rs` owns agent panel behaviour and slash commands;
+  `src/ui/agent_view.rs` draws it. Facts shown on cards come from the data
+  layer, never from model text. Tests inject a scripted `LlmClient` and never
+  call a real model.
 
 Keep terminal coordinates out of the data layer. Mouse handlers must consume
 the latest rendered `Rect` hit map and the current scroll offset, not hard-coded

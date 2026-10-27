@@ -26,6 +26,13 @@ pub struct LayoutMap {
     pub help_close: Option<Rect>,
     pub sidebar_rows: Vec<(Rect, SidebarItem)>,
     pub table_columns: Vec<(Rect, SortColumn)>,
+    /// The whole agent panel, when visible.
+    pub agent: Option<Rect>,
+    pub agent_transcript: Rect,
+    pub agent_cards_area: Rect,
+    pub agent_input: Rect,
+    /// Rendered lines of each recommendation card, by card index.
+    pub agent_cards: Vec<(Rect, usize)>,
 }
 
 #[derive(Default)]
