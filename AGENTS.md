@@ -20,7 +20,15 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
   venue topics), `profile.rs` (`~/.ccfddl/profile.yaml`), `llm.rs`
   (OpenAI-compatible client behind the `LlmClient` trait), `tools.rs`,
   `session.rs` (tool loop) and `worker.rs` (background thread).
-- `src/ui/agent.rs` owns agent panel behaviour and slash commands;
+- Model settings: `src/agent/providers.rs` (provider presets),
+  `src/agent/config.rs` (`~/.ccfddl/config.yaml`; precedence CLI > `CCFDDL_*`
+  env > profile > global > preset, with the origin of every value) and
+  `src/agent/cli_setup.rs` (`--setup`, `--check-llm`). Never print an API key
+  unmasked, never use a standard provider variable such as `DEEPSEEK_API_KEY`
+  unless a provider was configured, and never overwrite a `config.yaml` that
+  failed to parse. Tests inject the environment, model list and client.
+- `src/ui/agent.rs` owns agent panel behaviour and slash commands,
+  `src/ui/agent_setup.rs` the `/setup`, `/model` and `/config` commands;
   `src/ui/agent_view.rs` draws it. Facts shown on cards come from the data
   layer, never from model text. Tests inject a scripted `LlmClient` and never
   call a real model.

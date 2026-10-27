@@ -11,8 +11,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com/v1";
-pub const DEFAULT_MODEL: &str = "deepseek-chat";
+use super::Lang;
+use super::config::{DEFAULT_TEMPERATURE, DEFAULT_TIMEOUT_SECS, Overrides, mask_key, resolve};
+use super::providers;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -141,6 +142,66 @@ pub enum LlmError {
     Cancelled,
 }
 
+impl LlmError {
+    /// The model or endpoint rejected the `tools` parameter.
+    pub fn is_tool_unsupported(&self) -> bool {
+        match self {
+            Self::Status {
+                code: 400 | 404 | 422,
+                body,
+            } => {
+                let body = body.to_lowercase();
+                body.contains("tool") || body.contains("function call")
+            }
+            _ => false,
+        }
+    }
+
+    /// What the user can do about it.
+    pub fn hint(&self, lang: Lang) -> Option<&'static str> {
+        let hint = match self {
+            _ if self.is_tool_unsupported() => lang.pick(
+                "This model does not support tool calling; pick another one with /model list.",
+                "该模型不支持工具调用，请用 /model list 换一个模型。",
+            ),
+            Self::Status {
+                code: 401 | 403, ..
+            } => lang.pick(
+                "The API key is invalid or has no access to this model. Run /setup again.",
+                "API Key 无效或没有该模型的权限，请重新运行 /setup。",
+            ),
+            Self::Status { code: 404, .. } => lang.pick(
+                "Wrong model name or base URL. /model list shows the available models.",
+                "模型名或 Base URL 不正确，可用 /model list 查看可用模型。",
+            ),
+            Self::Status {
+                code: 402 | 429, ..
+            } => lang.pick(
+                "Rate limited or out of credit. Wait a moment or check your balance.",
+                "触发限流或余额不足，请稍后重试或检查账户余额。",
+            ),
+            Self::Status { code, .. } if *code >= 500 => lang.pick(
+                "The provider had a server error; try again later.",
+                "服务商出现服务器错误，请稍后再试。",
+            ),
+            Self::Http(_) => lang.pick(
+                "Network error or timeout. Check your connection, or set `proxy` in config.yaml.",
+                "网络错误或超时。请检查网络，或在 config.yaml 中设置 proxy。",
+            ),
+            _ => return None,
+        };
+        Some(hint)
+    }
+
+    /// Error text followed by the hint, if any.
+    pub fn explain(&self, lang: Lang) -> String {
+        match self.hint(lang) {
+            Some(hint) => format!("{self}\n{hint}"),
+            None => self.to_string(),
+        }
+    }
+}
+
 /// A chat model that may call tools.
 pub trait LlmClient: Send {
     fn model(&self) -> &str;
@@ -156,67 +217,135 @@ pub trait LlmClient: Send {
     ) -> Result<Completion, LlmError>;
 }
 
-/// Connection settings, read from `CCFDDL_*` environment variables.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Effective connection settings, produced by [`super::config::resolve`].
+#[derive(Clone, PartialEq)]
 pub struct LlmConfig {
+    /// Preset id (`deepseek`, `qwen`, ..., `custom`).
+    pub provider: String,
     pub base_url: String,
     pub api_key: Option<String>,
     pub model: String,
     pub stream: bool,
+    pub temperature: f64,
+    pub timeout_secs: u64,
+    pub proxy: Option<String>,
+}
+
+/// Never print the key, even in debug output.
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("api_key", &self.api_key.as_deref().map(mask_key))
+            .field("model", &self.model)
+            .field("stream", &self.stream)
+            .field("temperature", &self.temperature)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("proxy", &self.proxy)
+            .finish()
+    }
 }
 
 impl LlmConfig {
-    /// `CCFDDL_API_KEY`, `CCFDDL_BASE_URL`, `CCFDDL_MODEL`, `CCFDDL_STREAM`.
-    /// Returns `None` (offline mode) without an API key, unless the base URL
-    /// points at a local server such as Ollama.
-    pub fn from_env() -> Option<Self> {
-        Self::from_lookup(|key| std::env::var(key).ok())
+    /// A config with default tuning values.
+    pub fn new(
+        provider: impl Into<String>,
+        base_url: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
+        Self {
+            provider: provider.into(),
+            base_url: base_url.into().trim_end_matches('/').to_string(),
+            api_key,
+            model: model.into(),
+            stream: true,
+            temperature: DEFAULT_TEMPERATURE,
+            timeout_secs: DEFAULT_TIMEOUT_SECS,
+            proxy: None,
+        }
     }
 
+    /// Only the `CCFDDL_*` variables, ignoring `config.yaml` (kept for
+    /// callers that predate the config file).
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Option<Self> {
-        let get = |key: &str| {
-            lookup(key)
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-        };
-        let api_key = get("CCFDDL_API_KEY");
-        let base_url = get("CCFDDL_BASE_URL");
-        let is_local = base_url
-            .as_deref()
-            .is_some_and(|url| url.contains("localhost") || url.contains("127.0.0.1"));
-        if api_key.is_none() && !is_local {
-            return None;
-        }
-        Some(Self {
-            base_url: base_url
-                .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
-                .trim_end_matches('/')
-                .to_string(),
-            api_key,
-            model: get("CCFDDL_MODEL").unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-            stream: get("CCFDDL_STREAM").is_none_or(|v| v != "0" && v != "false"),
-        })
+        resolve(None, &Overrides::default(), &lookup)
+            .ok()
+            .flatten()
+            .map(|resolved| resolved.config)
     }
 
     pub fn endpoint(&self) -> String {
         format!("{}/chat/completions", self.base_url)
     }
+
+    /// `provider · model`, for titles.
+    pub fn label(&self) -> String {
+        format!("{} · {}", self.provider, self.model)
+    }
+
+    fn agent(&self) -> Result<ureq::Agent, LlmError> {
+        let mut builder = ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(Duration::from_secs(self.timeout_secs)))
+            .timeout_recv_body(Some(Duration::from_secs(self.timeout_secs.max(300))))
+            .http_status_as_error(false);
+        if let Some(proxy) = &self.proxy {
+            let proxy = ureq::Proxy::new(proxy)
+                .map_err(|e| LlmError::Http(format!("invalid proxy {proxy}: {e}")))?;
+            builder = builder.proxy(Some(proxy));
+        }
+        Ok(builder.build().into())
+    }
+}
+
+/// `GET {base_url}/models`, for `/setup` and `/model list`.
+pub fn list_models(config: &LlmConfig) -> Result<Vec<String>, LlmError> {
+    let agent = config.agent()?;
+    let mut request = agent.get(&format!("{}/models", config.base_url));
+    if let Some(key) = &config.api_key {
+        request = request.header("Authorization", &format!("Bearer {key}"));
+    }
+    let response = request.call().map_err(|e| LlmError::Http(e.to_string()))?;
+    let status = response.status().as_u16();
+    let text = response
+        .into_body()
+        .read_to_string()
+        .map_err(|e| LlmError::Http(e.to_string()))?;
+    if !(200..300).contains(&status) {
+        return Err(LlmError::Status {
+            code: status,
+            body: text.chars().take(300).collect(),
+        });
+    }
+    providers::parse_models(&text).map_err(LlmError::Parse)
+}
+
+/// A tiny request that exercises the key, the model and tool calling.
+pub fn ping(client: &mut dyn LlmClient) -> Result<(), LlmError> {
+    let tools = [ToolSpec {
+        name: "noop",
+        description: "Does nothing.",
+        parameters: json!({ "type": "object", "properties": {} }),
+    }];
+    let messages = [
+        ChatMessage::system("Connection test. Reply with the single word OK."),
+        ChatMessage::user("ping"),
+    ];
+    client
+        .complete(&messages, &tools, &mut |_| {}, &AtomicBool::new(false))
+        .map(|_| ())
 }
 
 pub struct OpenAiClient {
     config: LlmConfig,
-    agent: ureq::Agent,
+    agent: Result<ureq::Agent, String>,
 }
 
 impl OpenAiClient {
     pub fn new(config: LlmConfig) -> Self {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .timeout_recv_response(Some(Duration::from_secs(120)))
-            .timeout_recv_body(Some(Duration::from_secs(300)))
-            .http_status_as_error(false)
-            .build()
-            .into();
+        let agent = config.agent().map_err(|e| e.to_string());
         Self { config, agent }
     }
 }
@@ -226,11 +355,12 @@ pub fn request_body(
     messages: &[ChatMessage],
     tools: &[ToolSpec],
     stream: bool,
+    temperature: f64,
 ) -> Value {
     let mut body = json!({
         "model": model,
         "messages": messages.iter().map(ChatMessage::to_json).collect::<Vec<_>>(),
-        "temperature": 0.3,
+        "temperature": temperature,
         "stream": stream,
     });
     if !tools.is_empty() {
@@ -252,8 +382,15 @@ impl LlmClient for OpenAiClient {
         on_delta: &mut dyn FnMut(&str),
         cancel: &AtomicBool,
     ) -> Result<Completion, LlmError> {
-        let body = request_body(&self.config.model, messages, tools, self.config.stream);
-        let mut request = self.agent.post(&self.config.endpoint()).header(
+        let body = request_body(
+            &self.config.model,
+            messages,
+            tools,
+            self.config.stream,
+            self.config.temperature,
+        );
+        let agent = self.agent.as_ref().map_err(|e| LlmError::Http(e.clone()))?;
+        let mut request = agent.post(&self.config.endpoint()).header(
             "Accept",
             if self.config.stream {
                 "text/event-stream"
@@ -479,25 +616,52 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn config_requires_a_key_unless_local() {
+    fn env_only_config_still_works() {
         assert_eq!(LlmConfig::from_lookup(|_| None), None);
-        let cfg = LlmConfig::from_lookup(|k| (k == "CCFDDL_API_KEY").then(|| "sk".into())).unwrap();
-        assert_eq!(cfg.base_url, DEFAULT_BASE_URL);
-        assert_eq!(cfg.model, DEFAULT_MODEL);
+        let cfg =
+            LlmConfig::from_lookup(|k| (k == "CCFDDL_API_KEY").then(|| "sk-123456789".into()))
+                .unwrap();
+        assert_eq!(cfg.provider, "deepseek");
+        assert_eq!(cfg.endpoint(), "https://api.deepseek.com/chat/completions");
         assert!(cfg.stream);
-        let local = LlmConfig::from_lookup(|k| match k {
-            "CCFDDL_BASE_URL" => Some("http://localhost:11434/v1/".into()),
-            "CCFDDL_MODEL" => Some("qwen2.5".into()),
-            "CCFDDL_STREAM" => Some("0".into()),
-            _ => None,
-        })
-        .unwrap();
-        assert_eq!(
-            local.endpoint(),
-            "http://localhost:11434/v1/chat/completions"
+        assert!(!format!("{cfg:?}").contains("sk-123456789"));
+        assert_eq!(cfg.label(), "deepseek · deepseek-flash");
+    }
+
+    #[test]
+    fn errors_carry_actionable_hints() {
+        let status = |code: u16, body: &str| LlmError::Status {
+            code,
+            body: body.into(),
+        };
+        assert!(status(401, "").explain(Lang::En).contains("/setup"));
+        assert!(status(404, "").explain(Lang::Zh).contains("/model list"));
+        assert!(status(429, "").hint(Lang::En).is_some());
+        assert!(status(400, "this model does not support tools").is_tool_unsupported());
+        assert!(!status(400, "bad request").is_tool_unsupported());
+        assert!(
+            LlmError::Http("timeout".into())
+                .explain(Lang::En)
+                .contains("proxy")
         );
-        assert_eq!(local.api_key, None);
-        assert!(!local.stream);
+        assert_eq!(LlmError::Cancelled.hint(Lang::En), None);
+    }
+
+    #[test]
+    fn invalid_proxy_is_reported_on_use() {
+        let mut config = LlmConfig::new("custom", "http://localhost:1/v1", "m", None);
+        config.proxy = Some("::not a proxy::".into());
+        let mut client = OpenAiClient::new(config);
+        let result = client.complete(&[], &[], &mut |_| {}, &AtomicBool::new(false));
+        assert!(matches!(result, Err(LlmError::Http(message)) if message.contains("proxy")));
+    }
+
+    #[test]
+    fn ping_sends_a_tool_and_reports_failures() {
+        let mut ok = ScriptedClient::new(vec![Completion::default()]);
+        assert!(ping(&mut ok).is_ok());
+        let mut failing = ScriptedClient::new(vec![]);
+        assert!(ping(&mut failing).is_err());
     }
 
     #[test]
@@ -508,8 +672,9 @@ pub(crate) mod tests {
         let tool = ChatMessage::tool_result("id_x", "{}").to_json();
         assert_eq!(tool["role"], "tool");
         assert_eq!(tool["tool_call_id"], "id_x");
-        let body = request_body("m", &[ChatMessage::user("hi")], &[], true);
+        let body = request_body("m", &[ChatMessage::user("hi")], &[], true, 0.5);
         assert!(body.get("tools").is_none());
+        assert_eq!(body["temperature"], 0.5);
     }
 
     #[test]

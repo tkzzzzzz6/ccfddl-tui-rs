@@ -6,6 +6,7 @@
 //! the Python implementation and is verified against it by `tests/golden.rs`.
 
 pub mod agent;
+pub mod agent_setup;
 pub mod agent_view;
 pub mod app;
 pub mod browser;
@@ -54,13 +55,10 @@ impl Drop for MouseCaptureGuard {
 ///
 /// The terminal is restored even when the loop exits early, so a panic or an
 /// error never leaves the shell in raw mode.
-/// The agent panel reads its research profile from `profile_path` and uses
-/// a model when `CCFDDL_API_KEY` (or a local `CCFDDL_BASE_URL`) is set.
-pub fn run(
-    service: crate::data::DataService,
-    profile_path: std::path::PathBuf,
-) -> anyhow::Result<()> {
-    let agent = agent::AgentPanel::new(profile_path, crate::agent::llm::LlmConfig::from_env());
+///
+/// `agent` carries the research profile path and the resolved model
+/// settings (see `agent::config`).
+pub fn run(service: crate::data::DataService, agent: agent::AgentPanel) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     let result = match MouseCaptureGuard::enable() {
         Ok(_mouse) => event_loop(&mut terminal, App::with_agent(service, agent)),
@@ -84,7 +82,7 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
         // A short timeout keeps the countdown ticking without busy-waiting;
         // refresh completion is polled more frequently while a worker is active.
         let tick_timeout = TICK.saturating_sub(last_tick.elapsed());
-        let timeout = if app.agent.is_running() {
+        let timeout = if app.agent.is_busy() {
             // Streamed agent text should appear promptly.
             tick_timeout.min(Duration::from_millis(40))
         } else if app.is_refreshing {

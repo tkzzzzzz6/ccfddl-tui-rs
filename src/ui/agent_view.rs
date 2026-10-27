@@ -168,7 +168,7 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
             ),
         }
     }
-    if app.agent.is_running() {
+    if app.agent.is_busy() {
         let frame = (now.timestamp_subsec_millis() / 100) as usize % SPINNER.len();
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", SPINNER[frame]), theme::TITLE_STYLE),
@@ -330,7 +330,7 @@ pub fn render_agent(
     let lang: Lang = app.language.into();
     view.layout.agent = Some(area);
     let focused = app.focus == Focus::Agent;
-    let status = if app.agent.is_running() {
+    let status = if app.agent.is_busy() {
         lang.pick(" working ", " 运行中 ")
     } else {
         ""
@@ -465,12 +465,10 @@ pub fn render_agent(
             theme::DIM
         })
         .title(Span::styled(
-            match &app.agent.wizard {
-                Some(wizard) => match lang {
-                    Lang::Zh => format!(" /init {}/5 ", wizard.step.index() + 1),
-                    Lang::En => format!(" /init {}/5 ", wizard.step.index() + 1),
-                },
-                None => String::new(),
+            match (&app.agent.setup, &app.agent.wizard) {
+                (Some(setup), _) => setup.title(),
+                (None, Some(wizard)) => format!(" /init {}/5 ", wizard.step.index() + 1),
+                (None, None) => String::new(),
             },
             theme::TITLE_STYLE,
         ));
@@ -479,7 +477,9 @@ pub fn render_agent(
     let prompt = Span::styled("› ", theme::TITLE_STYLE);
     let available = (field.width as usize).saturating_sub(3);
     let line = if app.agent.input.is_empty() {
-        let placeholder = if app.agent.wizard.is_some() {
+        let placeholder = if app.agent.input_masked() {
+            lang.pick("Paste the key (hidden)", "粘贴 Key（输入会被隐藏）")
+        } else if app.agent.wizard.is_some() || app.agent.setup.is_some() {
             lang.pick("Answer the question above", "回答上面的问题")
         } else if focused {
             lang.pick(
@@ -496,10 +496,18 @@ pub fn render_agent(
         spans.push(Span::styled(placeholder, theme::DIM));
         Line::from(spans)
     } else {
-        // Show the end of long input, like a single-line text field.
+        // Show the end of long input, like a single-line text field. An API
+        // key is drawn as bullets only.
+        let masked;
+        let input: &str = if app.agent.input_masked() {
+            masked = "•".repeat(app.agent.input.chars().count());
+            &masked
+        } else {
+            &app.agent.input
+        };
         let mut shown: Vec<char> = Vec::new();
         let mut used = 0;
-        for c in app.agent.input.chars().rev() {
+        for c in input.chars().rev() {
             let w = char_width(c);
             if used + w > available {
                 break;
@@ -529,6 +537,35 @@ mod tests {
         assert_eq!(wrap("", 5), [""]);
         // A word longer than the line is split rather than looping.
         assert_eq!(wrap("abcdefgh", 3), ["abc", "def", "gh"]);
+    }
+
+    #[test]
+    fn api_keys_are_drawn_as_bullets() {
+        use crate::ui::agent::tests::app_with;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.input = "/setup".into();
+        app.submit_agent_input();
+        app.agent.input = "1".into();
+        app.submit_agent_input();
+        app.agent.input = "sk-visible-secret".into();
+        let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render::draw(frame, &mut app, Utc::now()))
+            .unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(!screen.contains("sk-visible"), "key leaked to the screen");
+        assert!(screen.contains("•••••"));
+        assert!(screen.contains("/setup 2/5"));
     }
 
     #[test]

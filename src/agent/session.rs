@@ -84,8 +84,17 @@ pub fn run_llm_turn(
                 emit(AgentEvent::Cancelled);
                 return;
             }
+            Err(error) if error.is_tool_unsupported() => {
+                // Still answer: the offline engine needs no tool calling.
+                emit(AgentEvent::Delta(format!(
+                    "{}\n",
+                    error.hint(ctx.lang).unwrap_or_default()
+                )));
+                run_offline_turn(ctx, user_text, DEFAULT_TOP, emit);
+                return;
+            }
             Err(error) => {
-                emit(AgentEvent::Failed(error.to_string()));
+                emit(AgentEvent::Failed(error.explain(ctx.lang)));
                 return;
             }
         };
@@ -321,6 +330,67 @@ mod tests {
             )
         });
         assert_eq!(events.last(), Some(&AgentEvent::Cancelled));
+    }
+
+    /// Fails every request with a fixed error.
+    struct FailingClient(u16, &'static str);
+
+    impl LlmClient for FailingClient {
+        fn model(&self) -> &str {
+            "failing"
+        }
+
+        fn complete(
+            &mut self,
+            _: &[ChatMessage],
+            _: &[crate::agent::llm::ToolSpec],
+            _: &mut dyn FnMut(&str),
+            _: &AtomicBool,
+        ) -> Result<Completion, LlmError> {
+            Err(LlmError::Status {
+                code: self.0,
+                body: self.1.to_string(),
+            })
+        }
+    }
+
+    #[test]
+    fn models_without_tool_calling_fall_back_to_offline_rules() {
+        let mut ctx = ctx(Lang::En);
+        let mut client = FailingClient(400, "tools are not supported by this model");
+        let events = collect(|emit| {
+            run_llm_turn(
+                &mut client,
+                &mut ctx,
+                Vec::new(),
+                "computer vision",
+                emit,
+                &AtomicBool::new(false),
+            )
+        });
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, AgentEvent::Recommendations(_)))
+        );
+        assert!(matches!(&events[0], AgentEvent::Delta(text) if text.contains("tool calling")));
+    }
+
+    #[test]
+    fn http_errors_explain_what_to_do() {
+        let mut ctx = ctx(Lang::Zh);
+        let mut client = FailingClient(401, "invalid key");
+        let events = collect(|emit| {
+            run_llm_turn(
+                &mut client,
+                &mut ctx,
+                Vec::new(),
+                "hi",
+                emit,
+                &AtomicBool::new(false),
+            )
+        });
+        assert!(matches!(events.last(), Some(AgentEvent::Failed(text)) if text.contains("/setup")));
     }
 
     #[test]
