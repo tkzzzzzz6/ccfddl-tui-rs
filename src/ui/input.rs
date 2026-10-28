@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{
 };
 use ratatui::layout::Position;
 
+use super::agent_results::PANEL_STEP;
 use super::app::{App, Focus};
 use super::view::{Drag, SCROLL_STEP, ViewState};
 
@@ -183,6 +184,9 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('d') => app.toggle_card_details(),
         KeyCode::Char('?') => app.ask_about_card(),
         KeyCode::Char('v') => app.toggle_only_recommended(),
+        KeyCode::Char('y') => app.copy_card(),
+        KeyCode::Char('<') => app.resize_panel(PANEL_STEP),
+        KeyCode::Char('>') => app.resize_panel(-PANEL_STEP),
         KeyCode::Char('[') => app.show_round(-1),
         KeyCode::Char(']') => app.show_round(1),
         KeyCode::Char('l') => app.toggle_language(),
@@ -295,6 +299,15 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
 
+    if view.layout.agent_divider.is_some_and(|d| d.contains(point))
+        && let Some(panel) = view.layout.agent
+    {
+        view.drag = Some(Drag::Panel {
+            origin_x: point.x,
+            width: panel.width,
+        });
+        return Outcome::Continue;
+    }
     if let Some(&(_, index)) = view
         .layout
         .agent_completions
@@ -445,6 +458,11 @@ fn drag_to(app: &mut App, view: &mut ViewState, point: Position) {
             if let Some(track) = view.layout.table_hscroll {
                 view.set_hoffset_at(track, point.x);
             }
+        }
+        Some(Drag::Panel { origin_x, width }) => {
+            // Moving the border left makes the panel wider.
+            let wanted = width as i32 + origin_x as i32 - point.x as i32;
+            app.set_panel_width(wanted.max(0) as u16);
         }
         None => {}
     }

@@ -19,7 +19,7 @@ use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
-use super::agent_results::PanelSize;
+use super::agent_results::{PANEL_MIN_WIDTH, PanelSize};
 use super::agent_view;
 use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
 use super::table_layout;
@@ -243,9 +243,19 @@ fn render_body(
     } else if app.agent.panel_size == PanelSize::Full && app.focus.in_agent() {
         (Rect::default(), Some(main))
     } else if main.width >= 120 {
-        let panel_width = (main.width * 42 / 100).max(46);
+        // The table keeps at least 60 columns; the divider can be dragged.
+        let max = main.width.saturating_sub(60).max(PANEL_MIN_WIDTH);
+        app.agent.panel_bounds = Some((PANEL_MIN_WIDTH, max));
+        let panel_width = app
+            .agent
+            .panel_width
+            .map_or((main.width * 42 / 100).max(46), |w| {
+                w.clamp(PANEL_MIN_WIDTH, max)
+            });
         let [left, right] =
             Layout::horizontal([Constraint::Min(60), Constraint::Length(panel_width)]).areas(main);
+        view.layout.agent_divider = Some(Rect::new(right.x, right.y, 1, right.height));
+        app.agent.panel_shown_width = right.width;
         (left, Some(right))
     } else if app.focus.in_agent() {
         (Rect::default(), Some(main))
@@ -927,6 +937,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("d", tr(language, "Details", "详情")),
                 ("?", tr(language, "Ask", "追问")),
                 ("v", tr(language, "Only these", "只看推荐")),
+                ("y", tr(language, "Copy", "复制")),
             ];
             if app.agent.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));

@@ -89,6 +89,48 @@ pub fn format_text(set: &RecommendationSet, now: DateTime<Utc>, lang: Lang) -> S
     out
 }
 
+/// One card as Markdown, for the clipboard (`y` in the panel).
+pub fn card_markdown(item: &Recommendation, now: DateTime<Utc>, lang: Lang) -> String {
+    let facts = &item.facts;
+    let mut out = format!(
+        "### {} {} ({})\n\n- {}: {} ({})\n- {}: {}\n",
+        facts.title,
+        facts.year,
+        item.tier.label(lang),
+        lang.pick("Deadline", "截稿"),
+        facts.deadline_text,
+        days_label(item, now, lang),
+        lang.pick("Rank", "等级"),
+        facts.rank_label(),
+    );
+    if !facts.date.is_empty() || !facts.place.is_empty() {
+        out.push_str(&format!(
+            "- {}: {} {}\n",
+            lang.pick("Venue", "会议"),
+            facts.date,
+            facts.place
+        ));
+    }
+    out.push_str(&format!(
+        "- {}: {}\n- {}: {}\n",
+        lang.pick("Why", "理由"),
+        item.reason,
+        lang.pick("Direction", "方向"),
+        item.direction
+    ));
+    if !item.risks.is_empty() {
+        out.push_str(&format!(
+            "- {}: {}\n",
+            lang.pick("Risks", "风险"),
+            item.risks.join(lang.pick("; ", "；"))
+        ));
+    }
+    if !facts.link.is_empty() {
+        out.push_str(&format!("- {}\n", facts.link));
+    }
+    out
+}
+
 fn md_escape(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }

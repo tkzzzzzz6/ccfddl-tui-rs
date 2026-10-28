@@ -37,6 +37,8 @@ pub struct LayoutMap {
     pub table_vscroll: Option<Rect>,
     /// Track of the horizontal table scrollbar (arrows excluded).
     pub table_hscroll: Option<Rect>,
+    /// Left border of the agent panel when it sits beside the table.
+    pub agent_divider: Option<Rect>,
     /// The whole agent panel, when visible.
     pub agent: Option<Rect>,
     pub agent_transcript: Rect,
@@ -61,6 +63,11 @@ pub enum Drag {
     },
     VerticalScroll,
     HorizontalScroll,
+    /// Dragging the agent panel's left border; it was `width` wide.
+    Panel {
+        origin_x: u16,
+        width: u16,
+    },
 }
 
 /// Two clicks on the same handle within this time reset the column.

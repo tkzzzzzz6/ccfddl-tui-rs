@@ -41,6 +41,9 @@ impl From<Language> for Lang {
     }
 }
 
+/// Copies text somewhere the user can paste it from.
+pub type Clipboard = Arc<dyn Fn(&str) -> std::io::Result<()> + Send + Sync>;
+
 /// One block of the transcript.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Entry {
@@ -171,6 +174,14 @@ pub struct AgentPanel {
     pub panel_size: PanelSize,
     /// Offline follow-up conditions accumulated over turns (`/reset`).
     pub constraints: Constraints,
+    /// Width chosen by dragging the divider or with `<` / `>`.
+    pub panel_width: Option<u16>,
+    /// Allowed panel widths in the last frame (side-by-side layout only).
+    pub panel_bounds: Option<(u16, u16)>,
+    /// Width of the panel in the last side-by-side frame.
+    pub panel_shown_width: u16,
+    /// Where `y` copies a card; OSC 52 to the terminal by default.
+    pub clipboard: Clipboard,
     /// `agent-session.json`; `None` disables saving.
     pub session_path: Option<PathBuf>,
     /// The saved session was read; only then is it written back.
@@ -228,6 +239,10 @@ impl AgentPanel {
             constraints: Constraints::default(),
             session_path,
             session_loaded: false,
+            panel_width: None,
+            panel_bounds: None,
+            panel_shown_width: 0,
+            clipboard: Arc::new(super::clipboard::copy_to_terminal),
             scroll: 0,
             profile: Profile::default(),
             profile_path,
@@ -1029,8 +1044,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · y copy as Markdown · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · y 复制为 Markdown · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }

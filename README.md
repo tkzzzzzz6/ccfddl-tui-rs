@@ -169,6 +169,7 @@ clicks continue to target the right control after scrolling or resizing.
 | Click or drag the vertical scrollbar | Jump to that position; the selection stays on screen |
 | Click or drag the horizontal scrollbar | Scroll the columns (shown on the bottom border when they overflow) |
 | Wheel over the sidebar | Scroll filters independently |
+| Drag the agent panel's left border | Resize the panel (the table keeps at least 60 columns) |
 | Click `[x]` or outside Help | Close the help overlay |
 
 Columns cannot be narrower than their header. Custom widths are saved to
@@ -371,6 +372,8 @@ recommendations.
 | `d` | Show / hide the details of the selected card (cards start compact: a title line and one line of reasoning) |
 | `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
 | `v` | The table shows only this round's conferences (`v` again or `Esc` in the table shows all) |
+| `y` | Copy the selected card as Markdown (OSC 52; terminals without support ignore it, use `/export`) |
+| `<` / `>` | Wider / narrower panel (beside the table); dragging its left border works too, `F2` resets |
 | `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
 | `i`, `Esc`, `Shift+Tab` | Back to the input (`/` also starts a command) |
 | `Tab` | To the table |

@@ -13,6 +13,7 @@ pub mod agent_setup;
 pub mod agent_view;
 pub mod app;
 pub mod browser;
+pub mod clipboard;
 pub mod input;
 pub mod line_input;
 pub mod refresh;
