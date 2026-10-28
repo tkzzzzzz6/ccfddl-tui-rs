@@ -2,7 +2,24 @@
 name = "ccfddl-tui"
 version = "0.2.0"
 edition = "2024"
+rust-version = "1.88"
 license = "MIT"
+description = "Terminal UI for CCF-ranked conference deadlines, with a conference recommendation agent"
+repository = "https://github.com/tkzzzzzz6/ccfddl-tui-rs"
+homepage = "https://github.com/tkzzzzzz6/ccfddl-tui-rs"
+readme = "README.md"
+keywords = ["ccf", "conference", "deadline", "tui", "ratatui"]
+categories = ["command-line-utilities"]
+# Only what is needed to build and run; `assets/allconf.yml` is the offline
+# snapshot compiled into the binary.
+include = [
+    "src/**",
+    "assets/allconf.yml",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+]
 
 [dependencies]
 anyhow = "1.0.104"
