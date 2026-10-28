@@ -16,6 +16,7 @@ use crate::agent::llm::{ChatMessage, LlmClient, LlmConfig, LlmError, OpenAiClien
 use crate::agent::profile::{Profile, normalize_ranks, parse_date, split_list};
 use crate::agent::providers;
 use crate::agent::recommend::RecommendationSet;
+use crate::agent::refine::Constraints;
 use crate::agent::report::export_markdown;
 use crate::agent::session::AgentEvent;
 use crate::agent::tools::ToolContext;
@@ -167,6 +168,8 @@ pub struct AgentPanel {
     /// Which round `recommendations` shows.
     pub round_cursor: usize,
     pub panel_size: PanelSize,
+    /// Offline follow-up conditions accumulated over turns (`/reset`).
+    pub constraints: Constraints,
     /// Transcript lines scrolled up from the bottom.
     pub scroll: usize,
     pub profile: Profile,
@@ -214,6 +217,7 @@ impl AgentPanel {
             rounds: Vec::new(),
             round_cursor: 0,
             panel_size: PanelSize::Half,
+            constraints: Constraints::default(),
             scroll: 0,
             profile: Profile::default(),
             profile_path,
@@ -477,6 +481,20 @@ impl App {
                 return;
             }
         }
+        // Offline, follow-ups refine the conditions of earlier turns.
+        let constraints = self.agent.llm.is_none().then(|| {
+            let current: Vec<String> = self
+                .agent
+                .recommendations
+                .iter()
+                .flat_map(|set| set.items.iter().map(|item| item.facts.title.clone()))
+                .collect();
+            self.agent.constraints =
+                self.agent
+                    .constraints
+                    .refine(text, self.service.conferences(), &current);
+            self.agent.constraints.clone()
+        });
         let ctx = ToolContext::new(
             self.service.conferences().to_vec(),
             self.service.favorites().clone(),
@@ -494,6 +512,7 @@ impl App {
             history: self.agent.history.clone(),
             user_text: text.to_string(),
             client,
+            constraints,
         }));
     }
 
@@ -700,7 +719,15 @@ impl App {
                 self.agent.info(format!("{summary}\n{path}"));
             }
             "model" => self.model_command(arg),
+            "reset" => {
+                self.agent.constraints = Constraints::default();
+                self.agent.info(lang.pick(
+                    "Follow-up conditions cleared; the next request starts from the profile.",
+                    "已清空追问条件，下次推荐从画像重新开始。",
+                ));
+            }
             "clear" => {
+                self.agent.constraints = Constraints::default();
                 self.agent.entries.clear();
                 self.agent.history.clear();
                 self.agent.recommendations = None;
@@ -974,6 +1001,37 @@ pub(crate) mod tests {
         app.agent_escape();
         assert!(!app.agent.open);
         assert_eq!(app.focus, Focus::Table);
+    }
+
+    #[test]
+    fn offline_follow_ups_refine_the_previous_request() {
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        type_and_enter(&mut app, "computer vision and databases");
+        wait(&mut app);
+        let first = app.agent.recommendations.clone().expect("cards");
+        assert_eq!(first.items.len(), 2);
+        assert!(first.conditions.len() <= 1);
+
+        type_and_enter(&mut app, "只要 A 类");
+        wait(&mut app);
+        let set = app.agent.recommendations.clone().expect("cards");
+        assert!(set.items.iter().all(|item| item.facts.ccf == "A"));
+        assert_eq!(set.items.len(), 1);
+        assert!(set.conditions.iter().any(|c| c.contains("CCF-A")));
+        // The research interests from the first turn are still in force.
+        assert!(app.agent.constraints.interests.is_some());
+
+        type_and_enter(&mut app, "换一批");
+        wait(&mut app);
+        let set = app.agent.recommendations.clone().expect("cards");
+        assert!(set.items.is_empty(), "{set:?}");
+
+        app.run_command("reset");
+        assert!(app.agent.constraints.is_empty());
+        type_and_enter(&mut app, "computer vision and databases");
+        wait(&mut app);
+        assert_eq!(app.agent.recommendations.as_ref().unwrap().items.len(), 2);
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod llm;
 pub mod profile;
 pub mod providers;
 pub mod recommend;
+pub mod refine;
 pub mod report;
 pub mod session;
 pub mod tools;

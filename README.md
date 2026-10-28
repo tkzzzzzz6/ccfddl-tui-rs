@@ -227,6 +227,24 @@ Explanations are generated from templates in English or Chinese. Free text in
 the panel works too: `我做多模态大模型，2027-03-01 能写完` adds those interests
 and that ready date for the request.
 
+Follow-ups refine the previous request instead of starting over; the
+conditions in force are shown above the cards and `/reset` clears them:
+
+| Say | Effect |
+|-----|--------|
+| `只要 A 类`, `A/B 类`, `不要 C 类`, `CCF-A only`, `no ccf-c` | Only these CCF ranks |
+| `只看 AI`, `只看数据库`, `only software engineering` | Only these CCF categories |
+| `多推荐几个`, `推荐 10 个`, `more`, `top 12` | Number of picks |
+| `换一批`, `others` | Exclude the round on screen |
+| `排除 ICCV`, `不要 CVPR`, `without ICME` | Exclude conferences |
+| `不要 TBD`, `no TBD` (`包括待定` undoes it) | Skip unannounced deadlines |
+| `只看国内`, `亚洲`, `欧洲`, `不去美国`, `avoid the US` | Prefer / avoid places |
+| `三个月内`, `半年内`, `2周内`, `within 60 days` | Deadline window |
+
+A new research description (`我做数据库`) replaces the previous one and keeps
+the other conditions. With a model these rules are not used; the model keeps
+the conversation itself.
+
 ```bash
 ccfddl-tui --recommend                       # uses the profile
 ccfddl-tui --recommend --interests "security,LLM" --top 5 --zh
@@ -368,7 +386,8 @@ profile), `/profile`, `/export [path]` (Markdown, default
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
-where each value comes from), `/lang`, `/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
+where each value comes from), `/reset` (forget follow-up conditions), `/lang`,
+`/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
 the table; clicking a shortcut or a completion runs it, and the mouse wheel
 scrolls the transcript or moves through cards.
 

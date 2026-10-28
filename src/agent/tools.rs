@@ -497,6 +497,7 @@ fn submit(ctx: &ToolContext, args: &Value, model: &str) -> ToolOutput {
         },
         recommendations: Some(RecommendationSet {
             summary,
+            conditions: Vec::new(),
             items,
             source: Source::Llm(model.to_string()),
             generated_at: ctx.now,

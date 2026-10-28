@@ -145,6 +145,8 @@ pub enum Source {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecommendationSet {
     pub summary: String,
+    /// Offline follow-up conditions in force, as short labels.
+    pub conditions: Vec<String>,
     pub items: Vec<Recommendation>,
     pub source: Source,
     pub generated_at: DateTime<Utc>,
@@ -687,7 +689,19 @@ impl Candidate {
 
 /// The complete offline recommendation.
 pub fn recommend(req: &Request, top: usize) -> RecommendationSet {
-    let all = candidates(req);
+    recommend_where(req, top, |_| true)
+}
+
+/// [`recommend`] restricted to the conferences `keep` accepts.
+pub fn recommend_where(
+    req: &Request,
+    top: usize,
+    keep: impl Fn(&ConferenceFacts) -> bool,
+) -> RecommendationSet {
+    let all: Vec<Candidate> = candidates(req)
+        .into_iter()
+        .filter(|c| keep(&c.facts))
+        .collect();
     let total = all.len();
     let picked = select(all, top);
     let lang = req.lang;
@@ -725,6 +739,7 @@ pub fn recommend(req: &Request, top: usize) -> RecommendationSet {
     };
     RecommendationSet {
         summary,
+        conditions: Vec::new(),
         items: picked
             .into_iter()
             .map(|c| c.into_recommendation(lang))

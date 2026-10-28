@@ -22,7 +22,8 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
   `src/ui`: `recommend.rs` (offline rule scoring), `topics.rs` (interest and
   venue topics), `profile.rs` (`~/.ccfddl/profile.yaml`), `llm.rs`
   (OpenAI-compatible client behind the `LlmClient` trait), `tools.rs`,
-  `session.rs` (tool loop) and `worker.rs` (background thread).
+  `session.rs` (tool loop), `refine.rs` (offline follow-up conditions kept
+  across turns) and `worker.rs` (background thread).
 - Model settings: `src/agent/providers.rs` (provider presets),
   `src/agent/config.rs` (`~/.ccfddl/config.yaml`; precedence CLI > `CCFDDL_*`
   env > profile > global > preset, with the origin of every value) and

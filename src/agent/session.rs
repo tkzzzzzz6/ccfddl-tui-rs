@@ -4,10 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::Lang;
 use super::llm::{ChatMessage, LlmClient, LlmError};
-use super::profile::parse_date;
 use super::recommend::{self, RecommendationSet, Request};
+use super::refine::Constraints;
 use super::tools::{self, ToolContext};
-use super::topics::tags_for_text;
 
 /// Upper bound on model calls per turn, so a confused model cannot loop.
 pub const MAX_STEPS: usize = 8;
@@ -146,29 +145,33 @@ pub fn run_llm_turn(
     emit(AgentEvent::Finished { history });
 }
 
-/// Rule-based answer for when no model is configured. Interests and a
-/// `YYYY-MM-DD` ready date are picked out of the user's text.
+/// Rule-based answer for when no model is configured. Interests, a
+/// `YYYY-MM-DD` ready date and other conditions are read from the text.
 pub fn run_offline_turn(
     ctx: &ToolContext,
     user_text: &str,
     top: usize,
     emit: &mut dyn FnMut(AgentEvent),
 ) {
-    let mut profile = ctx.profile.clone();
-    if !tags_for_text(user_text).is_empty() {
-        profile = profile.with_extra_interests(&[user_text.trim().to_string()]);
+    let mut constraints = Constraints::default().refine(user_text, &ctx.conferences, &[]);
+    if constraints.top.is_none() {
+        constraints.top = Some(top);
     }
-    if let Some(date) = user_text
-        .split(|c: char| !(c.is_ascii_digit() || c == '-' || c == '/'))
-        .find_map(parse_date)
-    {
-        profile.ready_date = Some(date);
-    }
+    run_offline_with(ctx, &constraints, emit);
+}
+
+/// Offline recommendations for conditions accumulated over several turns.
+pub fn run_offline_with(
+    ctx: &ToolContext,
+    constraints: &Constraints,
+    emit: &mut dyn FnMut(AgentEvent),
+) {
+    let profile = constraints.apply(&ctx.profile);
     emit(AgentEvent::ToolStarted {
         name: "rank_candidates".to_string(),
         arguments: String::new(),
     });
-    let set = recommend::recommend(
+    let mut set = recommend::recommend_where(
         &Request {
             conferences: &ctx.conferences,
             favorites: &ctx.favorites,
@@ -176,20 +179,26 @@ pub fn run_offline_turn(
             now: ctx.now,
             lang: ctx.lang,
         },
-        top,
+        constraints.top(),
+        |facts| constraints.keeps(facts),
     );
     emit(AgentEvent::ToolFinished {
         name: "rank_candidates".to_string(),
         summary: format!("{} picks", set.items.len()),
     });
-    emit(AgentEvent::Delta(
-        ctx.lang
-            .pick(
-                "Offline mode (no CCFDDL_API_KEY): rule-based recommendations.",
-                "离线模式（未设置 CCFDDL_API_KEY）：以下是规则推荐。",
-            )
-            .to_string(),
-    ));
+    let mut note = ctx
+        .lang
+        .pick(
+            "Offline mode (no CCFDDL_API_KEY): rule-based recommendations.",
+            "离线模式（未设置 CCFDDL_API_KEY）：以下是规则推荐。",
+        )
+        .to_string();
+    set.conditions = constraints.labels(ctx.lang);
+    if !set.conditions.is_empty() {
+        note.push_str(ctx.lang.pick("\nConditions: ", "\n条件："));
+        note.push_str(&set.conditions.join(" · "));
+    }
+    emit(AgentEvent::Delta(note));
     emit(AgentEvent::Recommendations(set));
     emit(AgentEvent::Finished {
         history: Vec::new(),

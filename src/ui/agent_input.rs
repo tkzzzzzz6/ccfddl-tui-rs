@@ -79,6 +79,12 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         zh: "切换中英文",
     },
     SlashCommand {
+        name: "reset",
+        args: "",
+        en: "Forget follow-up conditions (rank, count, exclusions…)",
+        zh: "清空追问条件（等级、数量、排除…）",
+    },
+    SlashCommand {
         name: "clear",
         args: "",
         en: "Clear the conversation",

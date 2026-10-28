@@ -101,15 +101,22 @@ pub fn format_markdown(set: &RecommendationSet, now: DateTime<Utc>, lang: Lang) 
         lang.pick("Conference recommendations", "会议推荐")
     ));
     out.push_str(&format!(
-        "- {}: {}\n- {}: {}\n\n{}\n\n",
+        "- {}: {}\n- {}: {}\n",
         lang.pick("Generated", "生成时间"),
         set.generated_at
             .with_timezone(&Local)
             .format("%Y-%m-%d %H:%M"),
         lang.pick("Source", "来源"),
         source_label(&set.source, lang),
-        set.summary
     ));
+    if !set.conditions.is_empty() {
+        out.push_str(&format!(
+            "- {}: {}\n",
+            lang.pick("Conditions", "条件"),
+            set.conditions.join(" · ")
+        ));
+    }
+    out.push_str(&format!("\n{}\n\n", set.summary));
     out.push_str(&format!(
         "| {} | {} | {} | {} | {} |\n|---|---|---|---|---|\n",
         lang.pick("Tier", "档位"),
