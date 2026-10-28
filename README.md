@@ -107,6 +107,7 @@ cargo run --release -- --ask "multimodal LLM, ready 2027-03-01" --zh
 | `f` | Toggle favourite |
 | `d` | Show / hide conference details |
 | `a` / `A` | Open the recommendation agent / ask it about the selected conference |
+| `v` | Show only the conferences recommended by the agent (again, or `Esc`, shows all) |
 | `s` | Cycle the sort column |
 | `S` | Reverse the sort direction |
 | `←` / `h`, `→` | Scroll the columns sideways when they are wider than the window |
@@ -369,11 +370,16 @@ recommendations.
 | `o` | Open the conference website |
 | `d` | Show / hide the details of the selected card (cards start compact: a title line and one line of reasoning) |
 | `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
+| `v` | The table shows only this round's conferences (`v` again or `Esc` in the table shows all) |
 | `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
 | `i`, `Esc`, `Shift+Tab` | Back to the input (`/` also starts a command) |
 | `Tab` | To the table |
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `q` | Quit |
+
+Conferences of the round on screen are marked in the table with a dot in
+their tier's colour (red stretch, yellow main, green safe), and switching
+rounds with `[` / `]` updates the marks.
 
 The terminal cursor sits at the insertion point, so input methods such as
 Chinese IMEs show their candidate window next to the text. Pasted text is
@@ -386,7 +392,7 @@ profile), `/profile`, `/export [path]` (Markdown, default
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
-where each value comes from), `/reset` (forget follow-up conditions), `/lang`,
+where each value comes from), `/reset` (forget follow-up conditions), `/only` (same as `v`), `/lang`,
 `/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
 the table; clicking a shortcut or a completion runs it, and the mouse wheel
 scrolls the transcript or moves through cards.

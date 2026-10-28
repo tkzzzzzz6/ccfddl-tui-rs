@@ -108,7 +108,7 @@ fn prefixed(
     }
 }
 
-fn tier_style(tier: Tier) -> Style {
+pub(crate) fn tier_style(tier: Tier) -> Style {
     let color = match tier {
         Tier::Stretch => theme::ERROR,
         Tier::Main => theme::WARNING,

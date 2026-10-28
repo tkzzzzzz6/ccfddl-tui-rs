@@ -14,6 +14,7 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, Wrap,
 };
 
+use crate::agent::Tier;
 use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
@@ -518,6 +519,7 @@ fn row_cells(
     columns: &[TableColumn],
     language: Language,
     now: DateTime<Utc>,
+    tier: Option<Tier>,
 ) -> Vec<Cell<'static>> {
     let title_style = if row.is_running && !row.is_tbd {
         theme::BOLD
@@ -537,10 +539,18 @@ fn row_cells(
                     };
                     Line::from(favorite)
                 }
-                TableColumn::Title => Line::from(Span::styled(
-                    format!("{} {}", row.title, row.year),
-                    title_style,
-                )),
+                TableColumn::Title => {
+                    let title = Span::styled(format!("{} {}", row.title, row.year), title_style);
+                    match tier {
+                        // Recommended in the round on screen: a dot in the
+                        // tier's colour, like the cards.
+                        Some(tier) => Line::from(vec![
+                            Span::styled("● ", agent_view::tier_style(tier)),
+                            title,
+                        ]),
+                        None => Line::from(title),
+                    }
+                }
                 TableColumn::Sub => Line::from(Span::styled(
                     row.sub.clone(),
                     Style::new().fg(theme::sub_color(&row.sub)),
@@ -654,7 +664,8 @@ fn render_table(
             } else {
                 Style::new().bg(theme::SURFACE_DARK)
             };
-            Row::new(row_cells(row, columns, app.language, now)).style(style)
+            let tier = app.recommended_tier(&row.title, row.year);
+            Row::new(row_cells(row, columns, app.language, now, tier)).style(style)
         })
         .collect();
     let widths: Vec<Constraint> = geometry
@@ -915,6 +926,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("o", tr(language, "Open", "官网")),
                 ("d", tr(language, "Details", "详情")),
                 ("?", tr(language, "Ask", "追问")),
+                ("v", tr(language, "Only these", "只看推荐")),
             ];
             if app.agent.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));

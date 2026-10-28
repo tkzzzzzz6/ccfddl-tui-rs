@@ -79,6 +79,12 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         zh: "切换中英文",
     },
     SlashCommand {
+        name: "only",
+        args: "",
+        en: "Table shows only the recommendations (again: all)",
+        zh: "表格只显示推荐的会议（再次执行恢复）",
+    },
+    SlashCommand {
         name: "reset",
         args: "",
         en: "Forget follow-up conditions (rank, count, exclusions…)",

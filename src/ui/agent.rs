@@ -582,6 +582,7 @@ impl App {
                 };
                 panel.entries.push(Entry::Assistant(summary));
                 panel.push_recommendations(set);
+                self.recommendations_changed();
             }
             AgentEvent::Finished { history } => {
                 if !history.is_empty() {
@@ -719,6 +720,13 @@ impl App {
                 self.agent.info(format!("{summary}\n{path}"));
             }
             "model" => self.model_command(arg),
+            "only" => {
+                self.agent.entries.pop();
+                self.toggle_only_recommended();
+                if let Some(status) = self.status.clone() {
+                    self.agent.info(status);
+                }
+            }
             "reset" => {
                 self.agent.constraints = Constraints::default();
                 self.agent.info(lang.pick(
@@ -733,6 +741,8 @@ impl App {
                 self.agent.recommendations = None;
                 self.agent.rounds.clear();
                 self.agent.round_cursor = 0;
+                self.only_recommended = false;
+                self.refresh_visible();
                 self.agent.card_cursor = 0;
                 self.agent
                     .info(lang.pick("Conversation cleared.", "对话已清空。"));
@@ -913,8 +923,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }

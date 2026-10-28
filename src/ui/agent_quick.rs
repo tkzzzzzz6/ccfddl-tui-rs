@@ -144,6 +144,7 @@ impl App {
             source: Source::Rules,
             generated_at: now,
         });
+        self.recommendations_changed();
     }
 }
 

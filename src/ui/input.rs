@@ -70,6 +70,7 @@ fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('s') => app.cycle_sort_column(),
         KeyCode::Char('a') => app.open_agent(),
         KeyCode::Char('A') => app.ask_about_selected_row(),
+        KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('S') => app.toggle_sort_direction(),
         KeyCode::Enter => {
             app.open_selected_url();
@@ -181,6 +182,7 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         }
         KeyCode::Char('d') => app.toggle_card_details(),
         KeyCode::Char('?') => app.ask_about_card(),
+        KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('[') => app.show_round(-1),
         KeyCode::Char(']') => app.show_round(1),
         KeyCode::Char('l') => app.toggle_language(),

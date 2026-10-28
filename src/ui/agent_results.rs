@@ -1,7 +1,7 @@
 //! Working with recommendation results: earlier rounds, follow-up questions
 //! about a card, asking about a table row, and the panel size.
 
-use crate::agent::{Lang, RecommendationSet};
+use crate::agent::{Lang, RecommendationSet, Tier};
 
 use super::agent::AgentPanel;
 use super::app::{App, Focus};
@@ -37,6 +37,58 @@ impl App {
         self.language.into()
     }
 
+    /// Tier of a conference in the round on screen.
+    pub fn recommended_tier(&self, title: &str, year: i32) -> Option<Tier> {
+        self.agent.recommendations.as_ref().and_then(|set| {
+            set.items
+                .iter()
+                .find(|item| item.facts.title == title && item.facts.year == year)
+                .map(|item| item.tier)
+        })
+    }
+
+    /// Re-filter after the round on screen changed, keeping the selection.
+    pub fn recommendations_changed(&mut self) {
+        if self.only_recommended {
+            let selected = self.selected_row().map(|row| (row.title.clone(), row.year));
+            self.refresh_visible();
+            if let Some((title, year)) = selected {
+                self.select_conference(&title, year);
+            }
+        }
+    }
+
+    /// `v` / `/only`: show only the recommended conferences in the table.
+    pub fn toggle_only_recommended(&mut self) {
+        let lang = self.results_lang();
+        let has_cards = self
+            .agent
+            .recommendations
+            .as_ref()
+            .is_some_and(|set| !set.items.is_empty());
+        if !self.only_recommended && !has_cards {
+            self.status = Some(
+                lang.pick(
+                    "No recommendations yet: press a and ask the agent first.",
+                    "还没有推荐结果：先按 a 让助手推荐。",
+                )
+                .to_string(),
+            );
+            return;
+        }
+        let selected = self.selected_row().map(|row| (row.title.clone(), row.year));
+        self.only_recommended = !self.only_recommended;
+        self.refresh_visible();
+        match selected {
+            Some((title, year))
+                if self.recommended_tier(&title, year).is_some() || !self.only_recommended =>
+            {
+                self.select_conference(&title, year)
+            }
+            _ => self.selected = 0,
+        }
+    }
+
     /// `[` / `]`: show an earlier or later round of recommendations.
     pub fn show_round(&mut self, delta: isize) {
         let count = self.agent.rounds.len();
@@ -50,6 +102,7 @@ impl App {
         self.agent.round_cursor = next;
         self.agent.recommendations = Some(self.agent.rounds[next].clone());
         self.agent.card_cursor = 0;
+        self.recommendations_changed();
     }
 
     /// `?` on a card: go to the input with a question about it.
@@ -234,5 +287,68 @@ mod tests {
         assert_eq!(app.agent.panel_size, PanelSize::Half);
         // The conversation survives hiding.
         assert!(!app.agent.entries.is_empty());
+    }
+
+    #[test]
+    fn table_can_show_only_the_recommendations() {
+        let (mut app, _dir) = app_with_cards();
+        // The fixture has two conferences; keep one in the round.
+        let mut one = set("one", &app);
+        one.items.truncate(1);
+        let kept = one.items[0].facts.title.clone();
+        app.agent.push_recommendations(one);
+        assert_eq!(app.visible.len(), 2);
+        assert!(app.recommended_tier(&kept, 2099).is_some());
+
+        app.toggle_only_recommended();
+        assert!(app.only_recommended);
+        assert_eq!(app.visible.len(), 1);
+        assert_eq!(app.visible[0].title, kept);
+        assert!(app.subtitle().contains("recommendations only"));
+
+        // Browsing to the earlier round (both conferences) follows along.
+        app.show_round(-1);
+        assert_eq!(app.visible.len(), 2);
+        app.show_round(1);
+        assert_eq!(app.visible.len(), 1);
+
+        // v again, or Esc in the table, shows everything.
+        app.toggle_only_recommended();
+        assert_eq!(app.visible.len(), 2);
+        app.toggle_only_recommended();
+        app.reset_filters();
+        assert!(!app.only_recommended);
+        assert_eq!(app.visible.len(), 2);
+    }
+
+    #[test]
+    fn only_recommended_needs_cards() {
+        let (mut app, _dir) = app_with(None);
+        app.toggle_only_recommended();
+        assert!(!app.only_recommended);
+        assert!(
+            app.status
+                .as_deref()
+                .unwrap()
+                .contains("No recommendations")
+        );
+    }
+
+    #[test]
+    fn recommended_rows_are_marked_in_the_table() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let (mut app, _dir) = app_with_cards();
+        app.focus = Focus::Table;
+        let mut terminal = Terminal::new(TestBackend::new(160, 30)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::render::draw(frame, &mut app, Utc::now()))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let text: String = (0..buffer.area.height)
+            .flat_map(|y| (0..buffer.area.width).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol().to_string())
+            .collect();
+        assert!(text.contains("● CVPR 2099"), "{text}");
     }
 }

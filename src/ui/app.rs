@@ -154,6 +154,8 @@ pub struct App {
     pub is_refreshing: bool,
     /// Conference recommendation agent (`a`).
     pub agent: AgentPanel,
+    /// Show only the conferences of the recommendation round on screen.
+    pub only_recommended: bool,
 }
 
 impl App {
@@ -182,6 +184,7 @@ impl App {
             show_details: false,
             is_refreshing: false,
             agent,
+            only_recommended: false,
         };
         app.reload(Utc::now());
         app
@@ -227,6 +230,17 @@ impl App {
     /// that on top.
     pub fn refresh_visible(&mut self) {
         self.visible = query::visible_rows(&self.rows, &self.filters);
+        if self.only_recommended {
+            if self.agent.recommendations.is_some() {
+                let visible = std::mem::take(&mut self.visible);
+                self.visible = visible
+                    .into_iter()
+                    .filter(|row| self.recommended_tier(&row.title, row.year).is_some())
+                    .collect();
+            } else {
+                self.only_recommended = false;
+            }
+        }
         self.apply_sort();
         self.selected = if self.visible.is_empty() {
             0
@@ -413,6 +427,7 @@ impl App {
     /// Reset every filter, matching `FilterSidebar.reset_filters`.
     pub fn reset_filters(&mut self) {
         self.filters = FilterState::default();
+        self.only_recommended = false;
         self.search_input.clear();
         self.refresh_visible();
     }
@@ -585,14 +600,22 @@ impl App {
         } else {
             ""
         };
+        let only = if self.only_recommended {
+            match self.language {
+                Language::En => " · recommendations only (v / Esc to show all)",
+                Language::Zh => " · 仅推荐（v / Esc 显示全部）",
+            }
+        } else {
+            ""
+        };
         match self.language {
             Language::En => format!(
-                "Showing {} of {} conferences{local}",
+                "Showing {} of {} conferences{local}{only}",
                 self.visible.len(),
                 self.total_count()
             ),
             Language::Zh => format!(
-                "显示 {} / {} 个会议{local}",
+                "显示 {} / {} 个会议{local}{only}",
                 self.visible.len(),
                 self.total_count()
             ),
