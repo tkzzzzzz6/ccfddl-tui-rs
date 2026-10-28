@@ -5,12 +5,13 @@
 
 use chrono::{DateTime, Duration, Utc};
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::buffer::Buffer;
+use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table, Wrap,
+    Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, Wrap,
 };
 
 use crate::data::ConferenceRow;
@@ -20,6 +21,7 @@ use crate::model::CATEGORIES;
 use super::agent_results::PanelSize;
 use super::agent_view;
 use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
+use super::table_layout;
 use super::theme;
 use super::view::{LayoutMap, ViewState};
 
@@ -36,7 +38,7 @@ pub const COLUMNS: [&str; 9] = [
     "Place",
 ];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TableColumn {
     Favorite,
     Title,
@@ -50,7 +52,38 @@ pub enum TableColumn {
 }
 
 impl TableColumn {
-    fn label(self, language: Language) -> &'static str {
+    pub const ALL: [TableColumn; 9] = [
+        Self::Favorite,
+        Self::Title,
+        Self::Sub,
+        Self::CcfRank,
+        Self::CoreRank,
+        Self::ThcplRank,
+        Self::Countdown,
+        Self::Date,
+        Self::Place,
+    ];
+
+    /// Stable name used in `layout.yaml`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Favorite => "favorite",
+            Self::Title => "title",
+            Self::Sub => "sub",
+            Self::CcfRank => "ccf",
+            Self::CoreRank => "core",
+            Self::ThcplRank => "thcpl",
+            Self::Countdown => "countdown",
+            Self::Date => "date",
+            Self::Place => "place",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.key() == key)
+    }
+
+    pub fn label(self, language: Language) -> &'static str {
         match (self, language) {
             (Self::Favorite, _) => "★",
             (Self::Title, Language::En) => "Title",
@@ -81,7 +114,7 @@ impl TableColumn {
         }
     }
 
-    fn width(self, language: Language) -> Constraint {
+    pub fn width(self, language: Language) -> Constraint {
         match self {
             Self::Favorite => Constraint::Length(1),
             Self::Title => Constraint::Max(36),
@@ -574,7 +607,42 @@ fn render_table(
     columns: &[TableColumn],
     now: DateTime<Utc>,
 ) {
+    let title = tr(app.language, "Conferences", "会议");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(if app.focus == Focus::Table {
+            Style::new().fg(theme::PRIMARY)
+        } else {
+            theme::DIM
+        })
+        .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE));
+    let inner = block.inner(area);
+    view.layout.table_header = Rect::new(inner.x, inner.y, inner.width, 1);
+    view.layout.table_rows = Rect::new(
+        inner.x,
+        inner.y + 1,
+        inner.width,
+        inner.height.saturating_sub(1),
+    );
     view.sync_table(app);
+
+    let geometry = table_layout::layout(columns, app.language, &view.column_widths, inner.width);
+    view.table_hmax = geometry.max_offset();
+    view.table_hoffset = view.table_hoffset.min(view.table_hmax);
+    let offset = view.table_hoffset;
+
+    let range = if app.visible.is_empty() {
+        "0 / 0".to_string()
+    } else {
+        let start = view.table_state.offset() + 1;
+        let end = (view.table_state.offset() + view.layout.table_rows.height as usize)
+            .min(app.visible.len());
+        format!("{start}-{end} / {}", app.visible.len())
+    };
+    let range_width = range.chars().count() as u16;
+    frame.render_widget(block.title_bottom(Line::from(range).right_aligned()), area);
+
     let header = Row::new(header_cells(app, columns)).style(theme::SECTION_STYLE);
     let rows: Vec<Row> = app
         .visible
@@ -589,55 +657,45 @@ fn render_table(
             Row::new(row_cells(row, columns, app.language, now)).style(style)
         })
         .collect();
-
-    let range = if app.visible.is_empty() {
-        "0 / 0".to_string()
-    } else {
-        let start = view.table_state.offset() + 1;
-        let end = (view.table_state.offset() + area.height.saturating_sub(3) as usize)
-            .min(app.visible.len());
-        format!("{start}-{end} / {}", app.visible.len())
-    };
-    let title = tr(app.language, "Conferences", "会议");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(if app.focus == Focus::Table {
-            Style::new().fg(theme::PRIMARY)
-        } else {
-            theme::DIM
-        })
-        .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE))
-        .title_bottom(Line::from(range).right_aligned());
-    let inner = block.inner(area);
-    view.layout.table_header = Rect::new(inner.x, inner.y, inner.width, 1);
-    view.layout.table_rows = Rect::new(
-        inner.x,
-        inner.y + 1,
-        inner.width,
-        inner.height.saturating_sub(1),
-    );
-
-    let widths: Vec<Constraint> = columns
+    let widths: Vec<Constraint> = geometry
+        .columns
         .iter()
-        .map(|column| column.width(app.language))
+        .map(|c| Constraint::Length(c.width))
         .collect();
-    let column_areas = Layout::horizontal(widths.clone())
-        .spacing(1)
-        .split(view.layout.table_header);
-    for (column, column_area) in columns.iter().zip(column_areas.iter()) {
-        if let Some(sort) = column.sort_column() {
-            view.layout.table_columns.push((*column_area, sort));
+    let table = Table::new(rows, widths)
+        .header(header)
+        .column_spacing(table_layout::SPACING)
+        .flex(Flex::Start)
+        .highlight_spacing(HighlightSpacing::Always)
+        .row_highlight_style(theme::SELECTED_STYLE)
+        .highlight_symbol(">");
+
+    // Render the full-width table off screen, then copy the frozen columns
+    // and the horizontally scrolled part into the frame.
+    let content = Rect::new(0, 0, geometry.content_width.max(inner.width), inner.height);
+    let mut buffer = Buffer::empty(content);
+    StatefulWidget::render(table, content, &mut buffer, &mut view.table_state);
+    let target = frame.buffer_mut();
+    for y in 0..inner.height {
+        for x in 0..inner.width {
+            let source = geometry.to_content(x, offset);
+            if source < content.width {
+                target[(inner.x + x, inner.y + y)] = buffer[(source, y)].clone();
+            }
         }
     }
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(block)
-        .column_spacing(1)
-        .row_highlight_style(theme::SELECTED_STYLE)
-        .highlight_symbol(">");
-    frame.render_stateful_widget(table, area, &mut view.table_state);
+    record_table_hits(view, &geometry, offset);
+    if inner.height > 0 {
+        let edge = inner.right();
+        for (handle, _, _) in view.layout.table_handles.iter().filter(|h| h.0.x < edge) {
+            let cell = &mut target[(handle.x, handle.y)];
+            cell.set_symbol("│");
+            if let Some(fg) = theme::DIM.fg {
+                cell.set_fg(fg);
+            }
+        }
+    }
 
     if app.visible.is_empty() {
         let message = if app.is_refreshing {
@@ -658,16 +716,81 @@ fn render_table(
     } else if app.visible.len() > view.layout.table_rows.height as usize
         && view.layout.table_rows.height > 0
     {
+        let rows_area = view.layout.table_rows;
         let mut state = ScrollbarState::new(app.visible.len())
             .position(view.table_state.offset())
-            .viewport_content_length(view.layout.table_rows.height as usize);
+            .viewport_content_length(rows_area.height as usize);
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(theme::ACCENT)
                 .track_style(theme::DIM),
-            view.layout.table_rows,
+            rows_area,
             &mut state,
         );
+        if rows_area.height > 2 {
+            view.layout.table_vscroll = Some(Rect::new(
+                rows_area.right() - 1,
+                rows_area.y + 1,
+                1,
+                rows_area.height - 2,
+            ));
+        }
+    }
+
+    // The horizontal scrollbar lives on the bottom border, left of the range.
+    if geometry.overflows() && area.width > range_width + 8 {
+        let bar = Rect::new(
+            area.x + 1,
+            area.bottom() - 1,
+            area.width - range_width - 4,
+            1,
+        );
+        let scrollable = (geometry.content_width - geometry.pinned) as usize;
+        let mut state = ScrollbarState::new(scrollable)
+            .position(offset as usize)
+            .viewport_content_length((geometry.viewport - geometry.pinned) as usize);
+        frame.render_stateful_widget(
+            Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
+                .thumb_style(theme::ACCENT)
+                .track_style(theme::DIM),
+            bar,
+            &mut state,
+        );
+        view.layout.table_hscroll = Some(Rect::new(bar.x + 1, bar.y, bar.width - 2, 1));
+    }
+}
+
+/// Sort targets and resize handles of the header, in screen coordinates.
+fn record_table_hits(view: &mut ViewState, geometry: &table_layout::TableGeometry, offset: u16) {
+    let header = view.layout.table_header;
+    if header.height == 0 {
+        return;
+    }
+    for placed in &geometry.columns {
+        if let Some(sort) = placed.column.sort_column()
+            && let Some((x, width)) = geometry.visible_span(placed.x, placed.width, offset)
+        {
+            view.layout
+                .table_columns
+                .push((Rect::new(header.x + x, header.y, width, 1), sort));
+        }
+        if placed.column == TableColumn::Favorite {
+            continue;
+        }
+        let handle = placed.x + placed.width;
+        // A column that ends at the right edge is resized from the border.
+        let screen = geometry.to_screen(handle, offset).or_else(|| {
+            let at_edge =
+                handle >= geometry.pinned + offset && handle - offset == geometry.viewport;
+            at_edge.then_some(geometry.viewport)
+        });
+        if let Some(x) = screen {
+            view.layout.table_handles.push((
+                Rect::new(header.x + x, header.y, 1, 1),
+                placed.column,
+                placed.width,
+            ));
+        }
     }
 }
 
@@ -871,6 +994,7 @@ fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
                 ("g / G", tr(language, "First / last row", "首行 / 末行")),
                 ("Click", tr(language, "Select row", "选择会议")),
                 ("Wheel", tr(language, "Scroll pane", "滚动区域")),
+                ("← / →", tr(language, "Scroll columns", "左右滚动列")),
             ],
         ),
         (
@@ -904,6 +1028,14 @@ fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
                 ("/", tr(language, "Search titles", "搜索会议")),
                 ("Space", tr(language, "Toggle checkbox", "切换复选框")),
                 ("Header", tr(language, "Click to sort", "点击表头排序")),
+                (
+                    "Drag │",
+                    tr(
+                        language,
+                        "Resize column (= resets)",
+                        "拖动调整列宽（= 恢复）",
+                    ),
+                ),
                 ("Esc", tr(language, "Reset filters", "重置筛选")),
             ],
         ),

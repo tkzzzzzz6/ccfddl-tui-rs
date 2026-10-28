@@ -12,6 +12,9 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
 - `src/ui/app.rs` owns application behavior and selection/filter state.
 - `src/ui/view.rs` owns persistent table/sidebar scrolling and mouse hit regions.
 - `src/ui/render.rs` renders the current frame and produces hit regions.
+- `src/ui/table_layout.rs` computes table column positions (custom widths,
+  horizontal scrolling with frozen `★`/title columns) and reads/writes
+  `~/.ccfddl/layout.yaml`; rendering and mouse handling both use it.
 - `src/ui/input.rs` routes keyboard and mouse input through the same `App`
   methods. Do not duplicate business logic for different input methods.
 - `src/ui/refresh.rs` performs network loading off the UI thread.

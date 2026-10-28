@@ -109,6 +109,8 @@ cargo run --release -- --ask "multimodal LLM, ready 2027-03-01" --zh
 | `a` / `A` | Open the recommendation agent / ask it about the selected conference |
 | `s` | Cycle the sort column |
 | `S` | Reverse the sort direction |
+| `←` / `h`, `→` | Scroll the columns sideways when they are wider than the window |
+| `=` | Restore the default column widths |
 | `l` | Toggle language (EN/ZH) |
 | `r` | Refresh from the data source |
 | `/` | Search |
@@ -159,12 +161,20 @@ clicks continue to target the right control after scrolling or resizing.
 | Click a filter checkbox | Toggle that category, rank or Show Expired |
 | Click Categories | Collapse / expand the category list |
 | Click the search field | Focus search input |
+| Drag a `│` handle in the table header | Resize the column to its left (the right border resizes the last column) |
+| Double-click a `│` handle | Restore that column's default width |
 | Wheel over the table | Move through conferences with a persistent scroll offset |
+| `Shift` + wheel, horizontal wheel | Scroll the columns sideways |
+| Click or drag the vertical scrollbar | Jump to that position; the selection stays on screen |
+| Click or drag the horizontal scrollbar | Scroll the columns (shown on the bottom border when they overflow) |
 | Wheel over the sidebar | Scroll filters independently |
 | Click `[x]` or outside Help | Close the help overlay |
 
-Right-click, drag and mouse motion are intentionally ignored. All mouse actions
-have keyboard equivalents. While mouse capture is active, native terminal text
+Columns cannot be narrower than their header. Custom widths are saved to
+`~/.ccfddl/layout.yaml` and reused on the next start; when the columns are
+wider than the window, `★` and the title stay in place while the other columns
+scroll. Right-click and mouse motion are ignored. All mouse actions have
+keyboard equivalents except resizing a single column (`=` restores them all). While mouse capture is active, native terminal text
 selection may require holding `Shift`, depending on the terminal.
 
 ## Layout and details

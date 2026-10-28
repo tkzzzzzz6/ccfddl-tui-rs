@@ -2,13 +2,16 @@
 
 use ccfddl_tui::data::{DataService, Favorites};
 use ccfddl_tui::ui::app::{App, Focus, SidebarItem, SortColumn};
-use ccfddl_tui::ui::input::handle_mouse;
-use ccfddl_tui::ui::render::{columns_for_width, draw_with_view};
+use ccfddl_tui::ui::input::{handle_mouse, handle_view_key};
+use ccfddl_tui::ui::render::{TableColumn, columns_for_width, draw_with_view};
+use ccfddl_tui::ui::table_layout::{HSCROLL_STEP, load_widths};
 use ccfddl_tui::ui::view::{LayoutMap, ViewState};
 use chrono::Utc;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 
 const YAML: &str = "
@@ -86,6 +89,10 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
         row: y,
         modifiers: KeyModifiers::NONE,
     }
+}
+
+fn key(code: KeyCode) -> KeyEvent {
+    KeyEvent::new(code, KeyModifiers::NONE)
 }
 
 fn click(x: u16, y: u16) -> MouseEvent {
@@ -426,4 +433,249 @@ fn resize_replaces_rather_than_reuses_stale_hit_regions() {
     assert!(view.layout.table_rows.is_empty());
     render(&mut app, &mut view, 90, 32);
     assert_ne!(view.layout.table_columns.len(), old.len());
+}
+
+fn many_rows(count: usize) -> App {
+    let mut yaml = String::new();
+    for i in 0..count {
+        yaml.push_str(&format!(
+            "
+- title: CONF{i:03}
+  sub: AI
+  rank: {{ccf: A}}
+  confs:
+  - year: 2030
+    timezone: UTC
+    date: June 10-15, 2030
+    place: Paris, France
+    timeline:
+    - deadline: '2030-06-01 00:00:00'
+"
+        ));
+    }
+    app_with_yaml(yaml)
+}
+
+fn handle(view: &ViewState, column: TableColumn) -> (Rect, u16) {
+    view.layout
+        .table_handles
+        .iter()
+        .find(|(_, candidate, _)| *candidate == column)
+        .map(|(area, _, width)| (*area, *width))
+        .expect("resize handle is rendered")
+}
+
+fn drag_handle(app: &mut App, view: &mut ViewState, column: TableColumn, by: i32) {
+    let (area, _) = handle(view, column);
+    handle_mouse(app, view, click(area.x, area.y));
+    let to = (area.x as i32 + by) as u16;
+    handle_mouse(
+        app,
+        view,
+        mouse(MouseEventKind::Drag(MouseButton::Left), to, area.y),
+    );
+    handle_mouse(
+        app,
+        view,
+        mouse(MouseEventKind::Up(MouseButton::Left), to, area.y),
+    );
+}
+
+#[test]
+fn header_shows_resize_handles_between_columns() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    let lines = render(&mut app, &mut view, 120, 32);
+    let (area, width) = handle(&view, TableColumn::Title);
+    assert!(width > 0);
+    let header = &lines[area.y as usize];
+    assert_eq!(header.chars().nth(area.x as usize), Some('│'), "{header}");
+    // The handle sits in the gap right after the title's sort target.
+    let title = view
+        .layout
+        .table_columns
+        .iter()
+        .find(|(_, c)| *c == SortColumn::Title)
+        .unwrap()
+        .0;
+    assert_eq!(title.right(), area.x);
+    assert!(
+        !view
+            .layout
+            .table_handles
+            .iter()
+            .any(|(_, c, _)| *c == TableColumn::Favorite)
+    );
+}
+
+#[test]
+fn dragging_a_handle_resizes_and_saves_the_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("layout.yaml");
+    let mut app = app();
+    let mut view = ViewState::new().with_layout_file(path.clone());
+    render(&mut app, &mut view, 120, 32);
+    let (_, before) = handle(&view, TableColumn::Title);
+
+    drag_handle(&mut app, &mut view, TableColumn::Title, -6);
+    assert_eq!(
+        view.column_widths.get(&TableColumn::Title),
+        Some(&(before - 6))
+    );
+    assert!(view.drag.is_none());
+    render(&mut app, &mut view, 120, 32);
+    assert_eq!(handle(&view, TableColumn::Title).1, before - 6);
+    assert_eq!(
+        load_widths(&path).get(&TableColumn::Title),
+        Some(&(before - 6))
+    );
+
+    // Saved widths come back in a new view.
+    let restored = ViewState::new().with_layout_file(path);
+    assert_eq!(restored.column_widths, view.column_widths);
+}
+
+#[test]
+fn a_column_cannot_be_dragged_below_its_header() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    drag_handle(&mut app, &mut view, TableColumn::Countdown, -50);
+    assert_eq!(
+        view.column_widths.get(&TableColumn::Countdown),
+        Some(&"Countdown".len().try_into().unwrap())
+    );
+}
+
+#[test]
+fn double_clicking_a_handle_restores_the_default_width() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    let (_, default) = handle(&view, TableColumn::Title);
+    drag_handle(&mut app, &mut view, TableColumn::Title, -8);
+    render(&mut app, &mut view, 120, 32);
+
+    let (area, _) = handle(&view, TableColumn::Title);
+    handle_mouse(&mut app, &mut view, click(area.x, area.y));
+    handle_mouse(&mut app, &mut view, click(area.x, area.y));
+    assert!(view.column_widths.is_empty());
+    render(&mut app, &mut view, 120, 32);
+    assert_eq!(handle(&view, TableColumn::Title).1, default);
+}
+
+#[test]
+fn equals_key_resets_all_widths_and_arrows_scroll_sideways() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    drag_handle(&mut app, &mut view, TableColumn::Title, 60);
+    render(&mut app, &mut view, 120, 32);
+    assert!(view.table_hmax > 0);
+
+    assert!(handle_view_key(&app, &mut view, key(KeyCode::Right)));
+    assert_eq!(view.table_hoffset, HSCROLL_STEP.min(view.table_hmax));
+    assert!(handle_view_key(&app, &mut view, key(KeyCode::Left)));
+    assert_eq!(view.table_hoffset, 0);
+    // Other keys and other focus areas are left to `handle_key`.
+    assert!(!handle_view_key(&app, &mut view, key(KeyCode::Char('j'))));
+    app.focus = Focus::Sidebar;
+    assert!(!handle_view_key(&app, &mut view, key(KeyCode::Right)));
+    app.focus = Focus::Table;
+
+    assert!(handle_view_key(&app, &mut view, key(KeyCode::Char('='))));
+    assert!(view.column_widths.is_empty());
+    render(&mut app, &mut view, 120, 32);
+    assert_eq!(view.table_hmax, 0);
+}
+
+#[test]
+fn clicking_a_header_still_sorts_after_resizing() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    drag_handle(&mut app, &mut view, TableColumn::Title, -4);
+    render(&mut app, &mut view, 120, 32);
+    let event = header_hit(&view, SortColumn::Countdown);
+    handle_mouse(&mut app, &mut view, event);
+    assert_eq!(app.sort_column, SortColumn::Countdown);
+}
+
+#[test]
+fn wide_columns_scroll_horizontally_with_the_title_frozen() {
+    let mut app = app();
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    drag_handle(&mut app, &mut view, TableColumn::Date, 40);
+    let lines = render(&mut app, &mut view, 120, 32);
+    let track = view.layout.table_hscroll.expect("horizontal scrollbar");
+    assert_eq!(track.y, view.layout.table.bottom() - 1);
+    assert!(lines.iter().any(|l| l.contains("CVPR 2030")));
+    assert!(lines.iter().any(|l| l.contains("Sub")));
+
+    // Shift + wheel scrolls sideways, the plain wheel still moves rows.
+    let rows = view.layout.table_rows;
+    let mut wheel = mouse(MouseEventKind::ScrollDown, rows.x + 3, rows.y);
+    wheel.modifiers = KeyModifiers::SHIFT;
+    handle_mouse(&mut app, &mut view, wheel);
+    assert_eq!(view.table_hoffset, HSCROLL_STEP);
+    let lines = render(&mut app, &mut view, 120, 32);
+    assert!(lines.iter().any(|l| l.contains("CVPR 2030")), "{lines:#?}");
+    assert!(!lines.iter().any(|l| l.contains("Sub")), "{lines:#?}");
+    assert!(lines.iter().any(|l| l.contains("June 10-15, 2030")));
+
+    // Dragging the scrollbar to its end shows the last column.
+    handle_mouse(&mut app, &mut view, click(track.x, track.y));
+    assert_eq!(view.table_hoffset, 0);
+    handle_mouse(
+        &mut app,
+        &mut view,
+        mouse(
+            MouseEventKind::Drag(MouseButton::Left),
+            track.right() - 1,
+            track.y,
+        ),
+    );
+    assert_eq!(view.table_hoffset, view.table_hmax);
+    handle_mouse(
+        &mut app,
+        &mut view,
+        mouse(
+            MouseEventKind::Up(MouseButton::Left),
+            track.right(),
+            track.y,
+        ),
+    );
+    let lines = render(&mut app, &mut view, 120, 32);
+    assert!(lines.iter().any(|l| l.contains("CVPR 2030")), "{lines:#?}");
+}
+
+#[test]
+fn vertical_scrollbar_can_be_clicked_and_dragged() {
+    let mut app = many_rows(80);
+    let mut view = ViewState::new();
+    render(&mut app, &mut view, 120, 32);
+    let track = view.layout.table_vscroll.expect("vertical scrollbar");
+    let page = view.layout.table_rows.height as usize;
+
+    handle_mouse(&mut app, &mut view, click(track.x, track.bottom() - 1));
+    assert_eq!(view.table_state.offset(), 80 - page);
+    assert!(app.selected >= 80 - page);
+    assert_eq!(app.focus, Focus::Table);
+
+    handle_mouse(
+        &mut app,
+        &mut view,
+        mouse(MouseEventKind::Drag(MouseButton::Left), track.x, track.y),
+    );
+    assert_eq!(view.table_state.offset(), 0);
+    assert!(app.selected < page);
+    handle_mouse(
+        &mut app,
+        &mut view,
+        mouse(MouseEventKind::Up(MouseButton::Left), track.x, track.y),
+    );
+    assert!(view.drag.is_none());
+    let lines = render(&mut app, &mut view, 120, 32);
+    assert!(lines.iter().any(|l| l.contains("CONF000")));
 }
