@@ -19,6 +19,7 @@ use crate::agent::recommend::RecommendationSet;
 use crate::agent::refine::Constraints;
 use crate::agent::report::export_markdown;
 use crate::agent::session::AgentEvent;
+use crate::agent::session_store::{self, SavedSession};
 use crate::agent::tools::ToolContext;
 use crate::agent::worker::{self, AgentHandle, AgentJob};
 use crate::agent::{Lang, Recommendation};
@@ -170,6 +171,10 @@ pub struct AgentPanel {
     pub panel_size: PanelSize,
     /// Offline follow-up conditions accumulated over turns (`/reset`).
     pub constraints: Constraints,
+    /// `agent-session.json`; `None` disables saving.
+    pub session_path: Option<PathBuf>,
+    /// The saved session was read; only then is it written back.
+    pub session_loaded: bool,
     /// Transcript lines scrolled up from the bottom.
     pub scroll: usize,
     pub profile: Profile,
@@ -200,6 +205,9 @@ impl AgentPanel {
             .parent()
             .map(|dir| dir.join("config.yaml"))
             .unwrap_or_else(|| PathBuf::from("config.yaml"));
+        let session_path = profile_path
+            .parent()
+            .map(|dir| dir.join("agent-session.json"));
         Self {
             open: false,
             input: LineInput::new(),
@@ -218,6 +226,8 @@ impl AgentPanel {
             round_cursor: 0,
             panel_size: PanelSize::Half,
             constraints: Constraints::default(),
+            session_path,
+            session_loaded: false,
             scroll: 0,
             profile: Profile::default(),
             profile_path,
@@ -310,6 +320,73 @@ impl AgentPanel {
         }
     }
 
+    /// Write the input history, the newest round and the follow-up
+    /// conditions. Best effort; nothing is written before the saved session
+    /// was read, so an unopened panel never clears it.
+    pub fn save_session(&self) {
+        let Some(path) = self.session_path.as_deref().filter(|_| self.session_loaded) else {
+            return;
+        };
+        let _ = session_store::save(
+            path,
+            &SavedSession {
+                input_history: self.input_history.clone(),
+                round: self.rounds.last().cloned(),
+                constraints: self.constraints.clone(),
+            },
+        );
+    }
+
+    fn restore_session(&mut self, conferences: &[crate::model::Conference], lang: Lang) {
+        if self.session_loaded {
+            return;
+        }
+        self.session_loaded = true;
+        let Some(path) = self.session_path.clone() else {
+            return;
+        };
+        match session_store::load(&path, conferences, Utc::now()) {
+            Ok(None) => {}
+            Ok(Some(restored)) => {
+                let SavedSession {
+                    input_history,
+                    round,
+                    constraints,
+                } = restored.session;
+                self.input_history = input_history;
+                self.constraints = constraints;
+                if let Some(round) = round {
+                    self.push_recommendations(round);
+                }
+                if restored.saved > 0 {
+                    let closed = restored.saved - restored.kept;
+                    self.info(match (lang, closed) {
+                        (Lang::Zh, 0) => format!(
+                            "已恢复上次的推荐（{} 个）。/forget 可清除保存的会话。",
+                            restored.kept
+                        ),
+                        (Lang::Zh, _) => format!(
+                            "已恢复上次的推荐（{}/{}，{closed} 个已截止或不在数据中）。",
+                            restored.kept, restored.saved
+                        ),
+                        (Lang::En, 0) => format!(
+                            "Restored the last recommendations ({}). /forget deletes the saved session.",
+                            restored.kept
+                        ),
+                        (Lang::En, _) => format!(
+                            "Restored the last recommendations ({}/{}; {closed} closed or no longer in the data).",
+                            restored.kept, restored.saved
+                        ),
+                    });
+                }
+            }
+            Err(error) => self.error(match lang {
+                Lang::Zh => format!("上次的会话无法读取，已忽略：{error}"),
+                Lang::En => format!("Ignored an unreadable saved session: {error}"),
+            }),
+        }
+    }
+
     fn welcome(&mut self, lang: Lang) {
         self.info(lang.pick(
             "Tell me what you work on and when the paper will be ready, e.g. \"multimodal LLM, ready 2027-03-01\", or pick a shortcut below.",
@@ -375,6 +452,11 @@ impl App {
         if first {
             self.agent.welcome(lang);
         }
+        if !self.agent.session_loaded {
+            let conferences = self.service.conferences().to_vec();
+            self.agent.restore_session(&conferences, lang);
+            self.recommendations_changed();
+        }
     }
 
     pub fn close_agent(&mut self) {
@@ -414,6 +496,7 @@ impl App {
         // Keys and questionnaire answers never enter the history.
         if self.agent.setup.is_none() && self.agent.wizard.is_none() {
             self.agent.record_history(&text);
+            self.agent.save_session();
         }
         if self.agent.setup.is_some() {
             self.answer_setup(&text);
@@ -589,6 +672,7 @@ impl App {
                     panel.history = history;
                 }
                 panel.handle = None;
+                panel.save_session();
             }
             AgentEvent::Failed(error) => {
                 panel.entries.push(Entry::Error(match lang {
@@ -727,8 +811,29 @@ impl App {
                     self.agent.info(status);
                 }
             }
+            "forget" => {
+                if let Some(path) = &self.agent.session_path
+                    && let Err(error) = session_store::forget(path)
+                {
+                    self.agent.error(error.to_string());
+                    return;
+                }
+                self.agent.input_history.clear();
+                self.agent.constraints = Constraints::default();
+                self.agent.rounds.clear();
+                self.agent.recommendations = None;
+                self.agent.round_cursor = 0;
+                self.agent.card_cursor = 0;
+                self.only_recommended = false;
+                self.refresh_visible();
+                self.agent.info(lang.pick(
+                    "Saved session deleted: input history, recommendations and conditions.",
+                    "已删除保存的会话：输入历史、推荐结果和追问条件。",
+                ));
+            }
             "reset" => {
                 self.agent.constraints = Constraints::default();
+                self.agent.save_session();
                 self.agent.info(lang.pick(
                     "Follow-up conditions cleared; the next request starts from the profile.",
                     "已清空追问条件，下次推荐从画像重新开始。",
@@ -744,6 +849,7 @@ impl App {
                 self.only_recommended = false;
                 self.refresh_visible();
                 self.agent.card_cursor = 0;
+                self.agent.save_session();
                 self.agent
                     .info(lang.pick("Conversation cleared.", "对话已清空。"));
             }
@@ -1011,6 +1117,62 @@ pub(crate) mod tests {
         app.agent_escape();
         assert!(!app.agent.open);
         assert_eq!(app.focus, Focus::Table);
+    }
+
+    #[test]
+    fn the_session_is_restored_after_a_restart() {
+        let (mut app, dir) = app_with(None);
+        app.open_agent();
+        type_and_enter(&mut app, "computer vision and databases");
+        wait(&mut app);
+        type_and_enter(&mut app, "只要 A 类");
+        wait(&mut app);
+        assert!(dir.path().join("agent-session.json").exists());
+
+        // A new app with the same home directory.
+        let (mut next, _other) = app_with(None);
+        next.agent = AgentPanel::new(dir.path().join("profile.yaml"), None);
+        next.agent.profile.horizon_days = 100_000;
+        next.agent.profile_loaded = true;
+        assert!(next.agent.input_history.is_empty());
+        next.open_agent();
+        assert_eq!(
+            next.agent.input_history,
+            ["computer vision and databases", "只要 A 类"]
+        );
+        assert_eq!(next.agent.constraints.only_ranks, ["A"]);
+        let set = next.agent.recommendations.clone().expect("restored cards");
+        assert_eq!(set.items.len(), 1);
+        assert_eq!(set.items[0].facts.title, "CVPR");
+        assert!(
+            next.agent
+                .entries
+                .iter()
+                .any(|e| matches!(e, Entry::Info(t) if t.contains("Restored")))
+        );
+
+        // /forget deletes it.
+        next.run_command("forget");
+        assert!(!dir.path().join("agent-session.json").exists());
+        assert!(next.agent.input_history.is_empty());
+        assert!(next.agent.recommendations.is_none());
+    }
+
+    #[test]
+    fn an_unopened_panel_never_overwrites_the_saved_session() {
+        let (mut app, dir) = app_with(None);
+        let path = dir.path().join("agent-session.json");
+        std::fs::write(&path, "{\"input_history\": [\"keep me\"]}").unwrap();
+        app.agent.save_session();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("keep me"));
+        std::fs::write(&path, "{broken").unwrap();
+        app.open_agent();
+        assert!(
+            app.agent
+                .entries
+                .iter()
+                .any(|e| matches!(e, Entry::Error(t) if t.contains("unreadable")))
+        );
     }
 
     #[test]

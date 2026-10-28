@@ -377,6 +377,13 @@ recommendations.
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `q` | Quit |
 
+The input history (last 100), the newest round of cards and the follow-up
+conditions are saved to `~/.ccfddl/agent-session.json` (owner-only on Unix)
+and restored the next time the panel opens. Only conference ids and the
+generated texts are stored: deadlines, ranks and places are rebuilt from the
+current data, and conferences that have closed since are dropped. API keys and
+the conversation are never saved; `/forget` deletes the file.
+
 Conferences of the round on screen are marked in the table with a dot in
 their tier's colour (red stretch, yellow main, green safe), and switching
 rounds with `[` / `]` updates the marks.
@@ -392,7 +399,8 @@ profile), `/profile`, `/export [path]` (Markdown, default
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
-where each value comes from), `/reset` (forget follow-up conditions), `/only` (same as `v`), `/lang`,
+where each value comes from), `/reset` (forget follow-up conditions), `/only` (same as `v`), `/forget`
+(delete the saved session), `/lang`,
 `/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
 the table; clicking a shortcut or a completion runs it, and the mouse wheel
 scrolls the transcript or moves through cards.

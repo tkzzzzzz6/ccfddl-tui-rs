@@ -24,6 +24,7 @@ pub mod recommend;
 pub mod refine;
 pub mod report;
 pub mod session;
+pub mod session_store;
 pub mod tools;
 pub mod topics;
 pub mod worker;

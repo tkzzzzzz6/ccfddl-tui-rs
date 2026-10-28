@@ -91,6 +91,12 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         zh: "清空追问条件（等级、数量、排除…）",
     },
     SlashCommand {
+        name: "forget",
+        args: "",
+        en: "Delete the saved session (history, last cards)",
+        zh: "删除保存的会话（输入历史、上次推荐）",
+    },
+    SlashCommand {
         name: "clear",
         args: "",
         en: "Clear the conversation",
