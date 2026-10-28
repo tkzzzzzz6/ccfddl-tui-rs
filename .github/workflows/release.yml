@@ -40,6 +40,23 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      # The tag, the GitHub Release and the crates.io version must agree, and
+      # crates.io versions cannot be replaced, so a mismatch stops everything.
+      - name: Check tag matches Cargo.toml version
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          TAG_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "ccfddl-tui") | .version')"
+          if [[ "$cargo_version" != "$TAG_VERSION" ]]; then
+            echo "::error::Tag v$TAG_VERSION does not match Cargo.toml version $cargo_version. Set version = \"$TAG_VERSION\" in Cargo.toml (and update Cargo.lock), commit, then tag that commit."
+            exit 1
+          fi
+          echo "Tag and Cargo.toml agree on $cargo_version"
+
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
 
@@ -76,23 +93,6 @@ jobs:
 
       - name: Cache Cargo artifacts
         uses: Swatinem/rust-cache@v2
-
-      - name: Apply tag version to package
-        if: github.ref_type == 'tag'
-        shell: bash
-        env:
-          VERSION: ${{ needs.verify.outputs.version }}
-        run: |
-          set -euo pipefail
-          awk -v version="$VERSION" '
-            !done && /^version = "/ {
-              sub(/"[^"]+"/, "\"" version "\"")
-              done = 1
-            }
-            { print }
-          ' Cargo.toml > Cargo.toml.release
-          mv Cargo.toml.release Cargo.toml
-          cargo check
 
       - name: Build release binary
         run: cargo build --release --locked
@@ -197,3 +197,48 @@ jobs:
             --generate-notes \
             --verify-tag \
             --title "$TAG_NAME"
+
+  publish-crate:
+    name: Publish to crates.io
+    needs: [verify, build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # id-token lets crates.io Trusted Publishing exchange the GitHub OIDC
+    # token for a short-lived publish token; no secret is stored.
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Skip versions that are already published
+        id: published
+        shell: bash
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -A "ccfddl-tui release workflow (github.com/${{ github.repository }})" \
+            "https://crates.io/api/v1/crates/ccfddl-tui/$VERSION")"
+          if [[ "$status" == "200" ]]; then
+            echo "ccfddl-tui $VERSION is already on crates.io; nothing to publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate with crates.io
+        if: steps.published.outputs.exists != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish crate
+        if: steps.published.outputs.exists != 'true'
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
