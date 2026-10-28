@@ -365,20 +365,33 @@ It does not push commits or publish releases.
 
 `.github/workflows/release.yml` provides on-demand binary delivery:
 
-- Pushing a `v*.*.*` tag derives the package version from the tag, runs the
-  full validation suite, packages native Windows, Linux and macOS binaries, and
-  creates a **public** GitHub Release with SHA256 checksums.
+- Pushing a `v*.*.*` tag first checks that the tag matches the `version` in
+  `Cargo.toml` (the workflow fails otherwise), runs the full validation suite,
+  packages native Windows, Linux and macOS binaries, creates a **public**
+  GitHub Release with SHA256 checksums, and publishes the crate to
+  [crates.io](https://crates.io/crates/ccfddl-tui).
+- Publishing uses crates.io Trusted Publishing: the `publish-crate` job
+  exchanges a GitHub OIDC token for a short-lived crates.io token, so no API
+  token is stored in the repository. A version that is already on crates.io is
+  skipped, so the workflow can be re-run safely.
 - Manual dispatch builds and uploads the same packages as Actions artifacts but
-  does not create a Release, making it suitable for pre-release testing.
-- Only the final release job has `contents: write`; build and verification
-  jobs keep read-only permissions.
+  does not create a Release or publish the crate, making it suitable for
+  pre-release testing.
+- Only the final release job has `contents: write`, and only `publish-crate`
+  has `id-token: write`; build and verification jobs keep read-only
+  permissions.
 
-Before publishing, update the changelog and push a version tag. CI injects the
-tag version into `Cargo.toml` and `Cargo.lock` during packaging, so you do not
-need to bump them manually for each release. This CI-only update is not
-committed back; building directly from a branch still uses the version written
-in `Cargo.toml`. No crates.io, container or nightly publication is configured. Release packages include `README.md` and `LICENSE`
-when present.
+To release, bump `version` in `Cargo.toml`, run `cargo check` so `Cargo.lock`
+follows, commit, then tag that commit with the same version and push the tag:
+
+```bash
+git tag -a v0.2.1 -m "v0.2.1"
+git push origin v0.2.1
+```
+
+crates.io versions cannot be replaced, so the version check runs before
+anything is built or published. Release packages include `README.md` and
+`LICENSE` when present.
 
 Each Release includes both compressed packages and raw executables, so users
 can either extract an archive or download a binary directly:

@@ -81,7 +81,10 @@ cursor tracking, embedded offline data, and `PT` timezone handling.
 
 Read `CONTRIBUTING.md` for the contribution workflow. CI changes must preserve
 read-only permissions by default. Release changes must keep `contents: write`
-limited to the final release job. Do not create tags, publish releases, or push
+limited to the final release job and `id-token: write` limited to
+`publish-crate` (crates.io Trusted Publishing). The release tag must match the
+`version` in `Cargo.toml`; bump it (and `Cargo.lock`) in a commit before tagging,
+never rewrite it in CI, because crates.io versions cannot be replaced. Do not create tags, publish releases, or push
 to a remote unless explicitly requested.
 
 ## License
