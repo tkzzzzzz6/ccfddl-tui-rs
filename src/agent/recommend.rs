@@ -490,39 +490,28 @@ fn score(
             Lang::En => format!("In your category {} ({cat})", facts.sub),
         });
     }
-    let rank_note = match tier {
-        Tier::Stretch => lang.pick(
-            "above or at the top of your target, worth a reach",
-            "达到或高于目标上限，适合冲刺",
-        ),
-        Tier::Main => lang.pick("matches your target", "符合目标等级"),
-        Tier::Safe => lang.pick(
-            "below your target, a safer option",
-            "低于目标等级，作为保底",
-        ),
-    };
-    reasons.push(format!(
-        "{}{}{rank_note}",
-        facts.rank_label(),
-        lang.pick(": ", "：")
-    ));
-    match (days_left, slack_days) {
-        (Some(days), Some(slack)) if profile.ready_date.is_some() => reasons.push(match lang {
-            Lang::Zh => format!(
-                "截稿 {}，还剩 {days} 天，论文就绪后余 {slack} 天",
-                facts.deadline_text
-            ),
-            Lang::En => format!(
-                "Deadline {}, {days} days left, {slack} days after your paper is ready",
-                facts.deadline_text
-            ),
-        }),
-        (Some(days), _) => reasons.push(match lang {
-            Lang::Zh => format!("截稿 {}，还剩 {days} 天", facts.deadline_text),
-            Lang::En => format!("Deadline {}, {days} days left", facts.deadline_text),
-        }),
-        _ => {}
+    // The rank and the deadline are on the card's title line already; the
+    // reasons only add what the title line cannot say.
+    if let (Some(slack), true) = (slack_days, profile.ready_date.is_some()) {
+        reasons.push(match lang {
+            Lang::Zh => format!("论文就绪后还有 {slack} 天"),
+            Lang::En => format!("{slack} days after your paper is ready"),
+        });
     }
+    reasons.push(
+        match tier {
+            Tier::Stretch => lang.pick(
+                "at or above the top of your target, worth a reach",
+                "达到或高于目标上限，适合冲刺",
+            ),
+            Tier::Main => lang.pick("matches your target rank", "符合目标等级"),
+            Tier::Safe => lang.pick(
+                "below your target, a safer option",
+                "低于目标等级，作为保底",
+            ),
+        }
+        .to_string(),
+    );
     if is_favorite {
         reasons.push(
             lang.pick("Already in your favorites", "已在收藏中")
@@ -908,9 +897,14 @@ pub(crate) mod tests {
         let list = run(&vision_profile(), Lang::Zh);
         let cvpr = list.iter().find(|c| c.facts.title == "CVPR").unwrap();
         let text = cvpr.reasons.join("|");
-        assert!(text.contains("CCF-A CORE A*"), "{text}");
-        assert!(text.contains("2030-03-10 23:59:59 (UTC-12)"), "{text}");
         assert!(text.contains("计算机视觉"), "{text}");
+        assert!(text.contains("适合冲刺"), "{text}");
+        // Rank and deadline live on the card title line, not in the reasons.
+        assert!(!text.contains("CCF-A"), "{text}");
+        assert!(!text.contains("2030-03-10"), "{text}");
+        // The facts themselves are still there.
+        assert_eq!(cvpr.facts.rank_label(), "CCF-A CORE A* THCPL A");
+        assert_eq!(cvpr.facts.deadline_text, "2030-03-10 23:59:59 (UTC-12)");
         assert!(
             cvpr.risks.iter().any(|r| r.contains("摘要")),
             "{:?}",

@@ -17,6 +17,7 @@ use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
+use super::agent_results::PanelSize;
 use super::agent_view;
 use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
 use super::theme;
@@ -205,6 +206,8 @@ fn render_body(
     // it on narrow ones while it has focus.
     let (main, agent_area) = if !app.agent.open {
         (main, None)
+    } else if app.agent.panel_size == PanelSize::Full && app.focus.in_agent() {
+        (Rect::default(), Some(main))
     } else if main.width >= 120 {
         let panel_width = (main.width * 42 / 100).max(46);
         let [left, right] =
@@ -781,16 +784,25 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("?", tr(language, "Help", "帮助")),
             ("q", tr(language, "Quit", "退出")),
         ],
-        Focus::AgentCards => vec![
-            ("j/k", tr(language, "Move", "移动")),
-            ("⏎", tr(language, "Show in table", "跳到表格")),
-            ("f", tr(language, "Favorite", "收藏")),
-            ("o", tr(language, "Open", "官网")),
-            ("d", tr(language, "Details", "详情")),
-            ("i", tr(language, "Input", "输入")),
-            ("Tab", tr(language, "Table", "表格")),
-            ("q", tr(language, "Quit", "退出")),
-        ],
+        Focus::AgentCards => {
+            let mut keys = vec![
+                ("j/k", tr(language, "Move", "移动")),
+                ("⏎", tr(language, "Show in table", "跳到表格")),
+                ("f", tr(language, "Favorite", "收藏")),
+                ("o", tr(language, "Open", "官网")),
+                ("d", tr(language, "Details", "详情")),
+                ("?", tr(language, "Ask", "追问")),
+            ];
+            if app.agent.rounds.len() > 1 {
+                keys.push(("[ ]", tr(language, "Rounds", "轮次")));
+            }
+            keys.extend([
+                ("i", tr(language, "Input", "输入")),
+                ("F2", tr(language, "Size", "尺寸")),
+                ("Tab", tr(language, "Table", "表格")),
+            ]);
+            keys
+        }
         Focus::Agent if app.agent.completion_visible() => vec![
             ("↑↓", tr(language, "Choose", "选择")),
             ("Tab", tr(language, "Complete", "补全")),
@@ -814,6 +826,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("/", tr(language, "Commands", "命令")),
             ("Tab", tr(language, "Cards / table", "卡片/表格")),
             ("PgUp/PgDn", tr(language, "Scroll", "滚动")),
+            ("F2", tr(language, "Size", "尺寸")),
             ("Esc", tr(language, "Stop/Close", "中断/关闭")),
         ],
         Focus::Table => vec![
@@ -870,6 +883,14 @@ fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
                 (
                     "a",
                     tr(language, "Ask the recommendation agent", "打开会议推荐助手"),
+                ),
+                (
+                    "A",
+                    tr(
+                        language,
+                        "Ask the agent about this row",
+                        "让推荐助手评估当前会议",
+                    ),
                 ),
                 ("l", tr(language, "Toggle language", "切换语言")),
                 ("r", tr(language, "Refresh data", "刷新数据")),

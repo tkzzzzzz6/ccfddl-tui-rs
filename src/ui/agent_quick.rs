@@ -137,13 +137,12 @@ impl App {
         if items.is_empty() {
             return;
         }
-        self.agent.recommendations = Some(RecommendationSet {
+        self.agent.push_recommendations(RecommendationSet {
             summary,
             items,
             source: Source::Rules,
             generated_at: now,
         });
-        self.agent.card_cursor = 0;
     }
 }
 

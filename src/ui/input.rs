@@ -69,6 +69,7 @@ fn table_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('d') => app.toggle_details(),
         KeyCode::Char('s') => app.cycle_sort_column(),
         KeyCode::Char('a') => app.open_agent(),
+        KeyCode::Char('A') => app.ask_about_selected_row(),
         KeyCode::Char('S') => app.toggle_sort_direction(),
         KeyCode::Enter => {
             app.open_selected_url();
@@ -142,6 +143,7 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
         KeyCode::Char('l') if ctrl => app.toggle_language(),
+        _ if is_panel_size_key(&key) => app.cycle_panel_size(),
         KeyCode::Char(c @ '1'..='4') if !ctrl && app.quick_actions_visible() => {
             app.run_quick_action(c as usize - '1' as usize);
         }
@@ -154,8 +156,18 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
     Outcome::Continue
 }
 
+/// F2, or Ctrl+\ (which some terminals report as Ctrl+4).
+fn is_panel_size_key(key: &KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    matches!(key.code, KeyCode::F(2)) || (ctrl && matches!(key.code, KeyCode::Char('\\' | '4')))
+}
+
 /// Recommendation cards: the same keys as the conference table.
 fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
+    if is_panel_size_key(&key) {
+        app.cycle_panel_size();
+        return Outcome::Continue;
+    }
     match key.code {
         KeyCode::Char('q') => return Outcome::Quit,
         KeyCode::Char('j') | KeyCode::Down => app.move_card(1),
@@ -168,6 +180,9 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
             app.open_card_url();
         }
         KeyCode::Char('d') => app.toggle_card_details(),
+        KeyCode::Char('?') => app.ask_about_card(),
+        KeyCode::Char('[') => app.show_round(-1),
+        KeyCode::Char(']') => app.show_round(1),
         KeyCode::Char('l') => app.toggle_language(),
         KeyCode::Char('/') => {
             app.focus_agent_input();
@@ -876,9 +891,10 @@ mod tests {
         assert!(app.service.is_favorite(&title, 2030));
         assert!(app.agent.input.is_empty(), "f is not typed in the cards");
 
-        assert!(app.agent.card_details);
-        press(&mut app, KeyCode::Char('d'));
+        // Cards start compact; d shows the details.
         assert!(!app.agent.card_details);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(app.agent.card_details);
 
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.focus, Focus::Table);
@@ -914,6 +930,57 @@ mod tests {
         // Plain Up is history.
         press(&mut app, KeyCode::Up);
         assert_eq!(app.agent.input, "computer vision database");
+    }
+
+    #[test]
+    fn result_keys_follow_up_rounds_and_table_questions() {
+        let mut app = app_with_cards();
+        press(&mut app, KeyCode::Tab);
+        let title = app.agent.selected_card().unwrap().facts.title.clone();
+        press(&mut app, KeyCode::Char('?'));
+        assert_eq!(app.focus, Focus::Agent);
+        assert_eq!(app.agent.input, format!("Why {title} 2030?").as_str());
+
+        // A second round, then browse back.
+        press_ctrl(&mut app, 'u');
+        type_text(&mut app, "database");
+        press(&mut app, KeyCode::Enter);
+        while app.agent.is_busy() {
+            app.poll_agent();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(app.agent.rounds.len(), 2);
+        app.focus = Focus::AgentCards;
+        press(&mut app, KeyCode::Char('['));
+        assert_eq!(app.agent.round_cursor, 0);
+        press(&mut app, KeyCode::Char(']'));
+        assert_eq!(app.agent.round_cursor, 1);
+
+        // `A` in the table asks about the selected row.
+        app.focus = Focus::Table;
+        let row = app.selected_row().unwrap().title.clone();
+        press(&mut app, KeyCode::Char('A'));
+        assert_eq!(app.focus, Focus::Agent);
+        assert!(app.agent.input.text().contains(&row));
+    }
+
+    #[test]
+    fn f2_and_ctrl_backslash_cycle_the_panel_size() {
+        use crate::ui::agent_results::PanelSize;
+
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        press(&mut app, KeyCode::F(2));
+        assert_eq!(app.agent.panel_size, PanelSize::Full);
+        press_ctrl(&mut app, '\\');
+        assert!(!app.agent.open);
+        assert_eq!(app.focus, Focus::Table);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.agent.open);
+        // Some terminals report Ctrl+\ as Ctrl+4.
+        press_ctrl(&mut app, '4');
+        assert_eq!(app.agent.panel_size, PanelSize::Full);
+        assert!(app.agent.input.is_empty(), "the chord is not typed");
     }
 
     #[test]
