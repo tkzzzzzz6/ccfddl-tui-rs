@@ -17,6 +17,7 @@ pub mod input;
 pub mod line_input;
 pub mod refresh;
 pub mod render;
+pub mod table_layout;
 pub mod theme;
 pub mod view;
 
@@ -103,7 +104,7 @@ pub fn run(service: crate::data::DataService, agent: agent::AgentPanel) -> anyho
 
 fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
-    let mut view = ViewState::new();
+    let mut view = ViewState::new().with_layout_file(table_layout::default_layout_path());
     let mut refresh_receiver = None;
     start_refresh(&mut app, &mut refresh_receiver);
 
@@ -125,6 +126,9 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
         };
         if event::poll(timeout)? {
             let outcome = match event::read()? {
+                Event::Key(key) if input::handle_view_key(&app, &mut view, key) => {
+                    Outcome::Continue
+                }
                 Event::Key(key) => input::handle_key(&mut app, key),
                 Event::Mouse(mouse) => input::handle_mouse(&mut app, &mut view, mouse),
                 Event::Paste(text) => input::handle_paste(&mut app, &text),

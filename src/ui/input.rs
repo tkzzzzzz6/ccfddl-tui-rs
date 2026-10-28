@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{
 use ratatui::layout::Position;
 
 use super::app::{App, Focus};
-use super::view::{SCROLL_STEP, ViewState};
+use super::view::{Drag, SCROLL_STEP, ViewState};
 
 /// What the caller should do after a key was handled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,6 +244,33 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
 
+    match mouse.kind {
+        MouseEventKind::Drag(MouseButton::Left) => {
+            drag_to(app, view, point);
+            return Outcome::Continue;
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            view.end_drag();
+            return Outcome::Continue;
+        }
+        _ => {}
+    }
+
+    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
+    let horizontal = match mouse.kind {
+        MouseEventKind::ScrollLeft => -1,
+        MouseEventKind::ScrollRight => 1,
+        MouseEventKind::ScrollUp if shift => -1,
+        MouseEventKind::ScrollDown if shift => 1,
+        _ => 0,
+    };
+    if horizontal != 0 {
+        if view.layout.table.contains(point) {
+            view.scroll_columns(horizontal);
+        }
+        return Outcome::Continue;
+    }
+
     let scroll = match mouse.kind {
         MouseEventKind::ScrollUp => -SCROLL_STEP,
         MouseEventKind::ScrollDown => SCROLL_STEP,
@@ -324,6 +351,36 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
 
+    if let Some(&(_, column, width)) = view
+        .layout
+        .table_handles
+        .iter()
+        .find(|(area, _, _)| area.contains(point))
+    {
+        app.focus = Focus::Table;
+        if view.handle_clicked(column) {
+            view.reset_column_width(column);
+        } else {
+            view.drag = Some(Drag::Column {
+                column,
+                origin_x: point.x,
+                width,
+            });
+        }
+        return Outcome::Continue;
+    }
+    if let Some(track) = view.layout.table_vscroll.filter(|t| t.contains(point)) {
+        app.focus = Focus::Table;
+        view.set_voffset_at(app, track, point.y);
+        view.drag = Some(Drag::VerticalScroll);
+        return Outcome::Continue;
+    }
+    if let Some(track) = view.layout.table_hscroll.filter(|t| t.contains(point)) {
+        view.set_hoffset_at(track, point.x);
+        view.drag = Some(Drag::HorizontalScroll);
+        return Outcome::Continue;
+    }
+
     for (area, column) in &view.layout.table_columns {
         if area.contains(point) {
             app.focus = Focus::Table;
@@ -363,6 +420,48 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         }
     }
     Outcome::Continue
+}
+
+/// Continue a drag started by a click on a handle or a scrollbar.
+fn drag_to(app: &mut App, view: &mut ViewState, point: Position) {
+    match view.drag {
+        Some(Drag::Column {
+            column,
+            origin_x,
+            width,
+        }) => {
+            let wanted = (width as i32 + point.x as i32 - origin_x as i32).max(1) as u16;
+            let min = super::table_layout::min_width(column, app.language);
+            view.set_column_width(column, wanted.max(min));
+        }
+        Some(Drag::VerticalScroll) => {
+            if let Some(track) = view.layout.table_vscroll {
+                view.set_voffset_at(app, track, point.y);
+            }
+        }
+        Some(Drag::HorizontalScroll) => {
+            if let Some(track) = view.layout.table_hscroll {
+                view.set_hoffset_at(track, point.x);
+            }
+        }
+        None => {}
+    }
+}
+
+/// Keys that act on the table's on-screen layout rather than on `App`:
+/// horizontal scrolling and resetting column widths. Returns `true` when
+/// the key was used.
+pub fn handle_view_key(app: &App, view: &mut ViewState, key: KeyEvent) -> bool {
+    if key.kind == KeyEventKind::Release || app.show_help || app.focus != Focus::Table {
+        return false;
+    }
+    match key.code {
+        KeyCode::Left | KeyCode::Char('h') => view.scroll_columns(-1),
+        KeyCode::Right => view.scroll_columns(1),
+        KeyCode::Char('=') => view.reset_column_widths(),
+        _ => return false,
+    }
+    true
 }
 
 #[cfg(test)]
