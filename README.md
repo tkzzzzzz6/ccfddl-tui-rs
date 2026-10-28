@@ -42,19 +42,28 @@ conference data.
 
 ## Installation
 
-Install with Cargo. This requires a Rust toolchain ([rustup.rs](https://rustup.rs))
-and works on macOS (Apple Silicon and Intel), Linux and Windows:
+[![crates.io](https://img.shields.io/crates/v/ccfddl-tui.svg)](https://crates.io/crates/ccfddl-tui)
+
+Install from [crates.io](https://crates.io/crates/ccfddl-tui) with Cargo. This
+requires a Rust toolchain ([rustup.rs](https://rustup.rs)) and works on macOS
+(Apple Silicon and Intel), Linux and Windows:
 
 ```bash
-cargo install --git https://github.com/tkzzzzzz6/ccfddl-tui-rs --tag v0.2.0 --locked
+cargo install ccfddl-tui --locked
 ccfddl-tui --version
 ```
 
-To upgrade, run the same command with a newer tag (add `--force` to reinstall
-the same version). To remove it:
+Run the same command again to upgrade to the latest release; it does nothing
+when you are already up to date. To remove it:
 
 ```bash
 cargo uninstall ccfddl-tui
+```
+
+To try unreleased changes from the `master` branch instead:
+
+```bash
+cargo install --git https://github.com/tkzzzzzz6/ccfddl-tui-rs --locked
 ```
 
 ## Usage
