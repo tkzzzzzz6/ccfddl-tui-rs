@@ -14,11 +14,12 @@ use ratatui::widgets::{
     ScrollbarOrientation, ScrollbarState, StatefulWidget, Table, Wrap,
 };
 
+use crate::agent::Tier;
 use crate::data::ConferenceRow;
 use crate::format::format_deadline_countdown;
 use crate::model::CATEGORIES;
 
-use super::agent_results::PanelSize;
+use super::agent_results::{PANEL_MIN_WIDTH, PanelSize};
 use super::agent_view;
 use super::app::{App, Focus, Language, SIDEBAR_WIDTH, SidebarItem, SortColumn};
 use super::table_layout;
@@ -242,9 +243,19 @@ fn render_body(
     } else if app.agent.panel_size == PanelSize::Full && app.focus.in_agent() {
         (Rect::default(), Some(main))
     } else if main.width >= 120 {
-        let panel_width = (main.width * 42 / 100).max(46);
+        // The table keeps at least 60 columns; the divider can be dragged.
+        let max = main.width.saturating_sub(60).max(PANEL_MIN_WIDTH);
+        app.agent.panel_bounds = Some((PANEL_MIN_WIDTH, max));
+        let panel_width = app
+            .agent
+            .panel_width
+            .map_or((main.width * 42 / 100).max(46), |w| {
+                w.clamp(PANEL_MIN_WIDTH, max)
+            });
         let [left, right] =
             Layout::horizontal([Constraint::Min(60), Constraint::Length(panel_width)]).areas(main);
+        view.layout.agent_divider = Some(Rect::new(right.x, right.y, 1, right.height));
+        app.agent.panel_shown_width = right.width;
         (left, Some(right))
     } else if app.focus.in_agent() {
         (Rect::default(), Some(main))
@@ -518,6 +529,7 @@ fn row_cells(
     columns: &[TableColumn],
     language: Language,
     now: DateTime<Utc>,
+    tier: Option<Tier>,
 ) -> Vec<Cell<'static>> {
     let title_style = if row.is_running && !row.is_tbd {
         theme::BOLD
@@ -537,10 +549,18 @@ fn row_cells(
                     };
                     Line::from(favorite)
                 }
-                TableColumn::Title => Line::from(Span::styled(
-                    format!("{} {}", row.title, row.year),
-                    title_style,
-                )),
+                TableColumn::Title => {
+                    let title = Span::styled(format!("{} {}", row.title, row.year), title_style);
+                    match tier {
+                        // Recommended in the round on screen: a dot in the
+                        // tier's colour, like the cards.
+                        Some(tier) => Line::from(vec![
+                            Span::styled("● ", agent_view::tier_style(tier)),
+                            title,
+                        ]),
+                        None => Line::from(title),
+                    }
+                }
                 TableColumn::Sub => Line::from(Span::styled(
                     row.sub.clone(),
                     Style::new().fg(theme::sub_color(&row.sub)),
@@ -654,7 +674,8 @@ fn render_table(
             } else {
                 Style::new().bg(theme::SURFACE_DARK)
             };
-            Row::new(row_cells(row, columns, app.language, now)).style(style)
+            let tier = app.recommended_tier(&row.title, row.year);
+            Row::new(row_cells(row, columns, app.language, now, tier)).style(style)
         })
         .collect();
     let widths: Vec<Constraint> = geometry
@@ -915,6 +936,8 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("o", tr(language, "Open", "官网")),
                 ("d", tr(language, "Details", "详情")),
                 ("?", tr(language, "Ask", "追问")),
+                ("v", tr(language, "Only these", "只看推荐")),
+                ("y", tr(language, "Copy", "复制")),
             ];
             if app.agent.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));

@@ -13,6 +13,7 @@ pub mod agent_setup;
 pub mod agent_view;
 pub mod app;
 pub mod browser;
+pub mod clipboard;
 pub mod input;
 pub mod line_input;
 pub mod refresh;
@@ -139,7 +140,10 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
                 _ => Outcome::Continue,
             };
             match outcome {
-                Outcome::Quit => break,
+                Outcome::Quit => {
+                    app.agent.save_session();
+                    break;
+                }
                 Outcome::Reload => start_refresh(&mut app, &mut refresh_receiver),
                 Outcome::Continue => {}
             }

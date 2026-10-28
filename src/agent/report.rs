@@ -89,6 +89,48 @@ pub fn format_text(set: &RecommendationSet, now: DateTime<Utc>, lang: Lang) -> S
     out
 }
 
+/// One card as Markdown, for the clipboard (`y` in the panel).
+pub fn card_markdown(item: &Recommendation, now: DateTime<Utc>, lang: Lang) -> String {
+    let facts = &item.facts;
+    let mut out = format!(
+        "### {} {} ({})\n\n- {}: {} ({})\n- {}: {}\n",
+        facts.title,
+        facts.year,
+        item.tier.label(lang),
+        lang.pick("Deadline", "截稿"),
+        facts.deadline_text,
+        days_label(item, now, lang),
+        lang.pick("Rank", "等级"),
+        facts.rank_label(),
+    );
+    if !facts.date.is_empty() || !facts.place.is_empty() {
+        out.push_str(&format!(
+            "- {}: {} {}\n",
+            lang.pick("Venue", "会议"),
+            facts.date,
+            facts.place
+        ));
+    }
+    out.push_str(&format!(
+        "- {}: {}\n- {}: {}\n",
+        lang.pick("Why", "理由"),
+        item.reason,
+        lang.pick("Direction", "方向"),
+        item.direction
+    ));
+    if !item.risks.is_empty() {
+        out.push_str(&format!(
+            "- {}: {}\n",
+            lang.pick("Risks", "风险"),
+            item.risks.join(lang.pick("; ", "；"))
+        ));
+    }
+    if !facts.link.is_empty() {
+        out.push_str(&format!("- {}\n", facts.link));
+    }
+    out
+}
+
 fn md_escape(text: &str) -> String {
     text.replace('|', "\\|").replace('\n', " ")
 }
@@ -101,15 +143,22 @@ pub fn format_markdown(set: &RecommendationSet, now: DateTime<Utc>, lang: Lang) 
         lang.pick("Conference recommendations", "会议推荐")
     ));
     out.push_str(&format!(
-        "- {}: {}\n- {}: {}\n\n{}\n\n",
+        "- {}: {}\n- {}: {}\n",
         lang.pick("Generated", "生成时间"),
         set.generated_at
             .with_timezone(&Local)
             .format("%Y-%m-%d %H:%M"),
         lang.pick("Source", "来源"),
         source_label(&set.source, lang),
-        set.summary
     ));
+    if !set.conditions.is_empty() {
+        out.push_str(&format!(
+            "- {}: {}\n",
+            lang.pick("Conditions", "条件"),
+            set.conditions.join(" · ")
+        ));
+    }
+    out.push_str(&format!("\n{}\n\n", set.summary));
     out.push_str(&format!(
         "| {} | {} | {} | {} | {} |\n|---|---|---|---|---|\n",
         lang.pick("Tier", "档位"),

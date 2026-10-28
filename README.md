@@ -107,6 +107,7 @@ cargo run --release -- --ask "multimodal LLM, ready 2027-03-01" --zh
 | `f` | Toggle favourite |
 | `d` | Show / hide conference details |
 | `a` / `A` | Open the recommendation agent / ask it about the selected conference |
+| `v` | Show only the conferences recommended by the agent (again, or `Esc`, shows all) |
 | `s` | Cycle the sort column |
 | `S` | Reverse the sort direction |
 | `←` / `h`, `→` | Scroll the columns sideways when they are wider than the window |
@@ -168,6 +169,7 @@ clicks continue to target the right control after scrolling or resizing.
 | Click or drag the vertical scrollbar | Jump to that position; the selection stays on screen |
 | Click or drag the horizontal scrollbar | Scroll the columns (shown on the bottom border when they overflow) |
 | Wheel over the sidebar | Scroll filters independently |
+| Drag the agent panel's left border | Resize the panel (the table keeps at least 60 columns) |
 | Click `[x]` or outside Help | Close the help overlay |
 
 Columns cannot be narrower than their header. Custom widths are saved to
@@ -226,6 +228,24 @@ between the ready date and the deadline, and favorites / place preferences.
 Explanations are generated from templates in English or Chinese. Free text in
 the panel works too: `我做多模态大模型，2027-03-01 能写完` adds those interests
 and that ready date for the request.
+
+Follow-ups refine the previous request instead of starting over; the
+conditions in force are shown above the cards and `/reset` clears them:
+
+| Say | Effect |
+|-----|--------|
+| `只要 A 类`, `A/B 类`, `不要 C 类`, `CCF-A only`, `no ccf-c` | Only these CCF ranks |
+| `只看 AI`, `只看数据库`, `only software engineering` | Only these CCF categories |
+| `多推荐几个`, `推荐 10 个`, `more`, `top 12` | Number of picks |
+| `换一批`, `others` | Exclude the round on screen |
+| `排除 ICCV`, `不要 CVPR`, `without ICME` | Exclude conferences |
+| `不要 TBD`, `no TBD` (`包括待定` undoes it) | Skip unannounced deadlines |
+| `只看国内`, `亚洲`, `欧洲`, `不去美国`, `avoid the US` | Prefer / avoid places |
+| `三个月内`, `半年内`, `2周内`, `within 60 days` | Deadline window |
+
+A new research description (`我做数据库`) replaces the previous one and keeps
+the other conditions. With a model these rules are not used; the model keeps
+the conversation itself.
 
 ```bash
 ccfddl-tui --recommend                       # uses the profile
@@ -351,11 +371,25 @@ recommendations.
 | `o` | Open the conference website |
 | `d` | Show / hide the details of the selected card (cards start compact: a title line and one line of reasoning) |
 | `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
+| `v` | The table shows only this round's conferences (`v` again or `Esc` in the table shows all) |
+| `y` | Copy the selected card as Markdown (OSC 52; terminals without support ignore it, use `/export`) |
+| `<` / `>` | Wider / narrower panel (beside the table); dragging its left border works too, `F2` resets |
 | `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
 | `i`, `Esc`, `Shift+Tab` | Back to the input (`/` also starts a command) |
 | `Tab` | To the table |
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `q` | Quit |
+
+The input history (last 100), the newest round of cards and the follow-up
+conditions are saved to `~/.ccfddl/agent-session.json` (owner-only on Unix)
+and restored the next time the panel opens. Only conference ids and the
+generated texts are stored: deadlines, ranks and places are rebuilt from the
+current data, and conferences that have closed since are dropped. API keys and
+the conversation are never saved; `/forget` deletes the file.
+
+Conferences of the round on screen are marked in the table with a dot in
+their tier's colour (red stretch, yellow main, green safe), and switching
+rounds with `[` / `]` updates the marks.
 
 The terminal cursor sits at the insertion point, so input methods such as
 Chinese IMEs show their candidate window next to the text. Pasted text is
@@ -368,7 +402,9 @@ profile), `/profile`, `/export [path]` (Markdown, default
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
-where each value comes from), `/lang`, `/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
+where each value comes from), `/reset` (forget follow-up conditions), `/only` (same as `v`), `/forget`
+(delete the saved session), `/lang`,
+`/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
 the table; clicking a shortcut or a completion runs it, and the mouse wheel
 scrolls the transcript or moves through cards.
 

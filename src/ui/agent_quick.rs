@@ -139,10 +139,12 @@ impl App {
         }
         self.agent.push_recommendations(RecommendationSet {
             summary,
+            conditions: Vec::new(),
             items,
             source: Source::Rules,
             generated_at: now,
         });
+        self.recommendations_changed();
     }
 }
 

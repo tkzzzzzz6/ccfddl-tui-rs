@@ -7,7 +7,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 
 use super::llm::{ChatMessage, LlmClient};
-use super::session::{AgentEvent, run_llm_turn, run_offline_turn};
+use super::refine::Constraints;
+use super::session::{AgentEvent, run_llm_turn, run_offline_turn, run_offline_with};
 use super::tools::ToolContext;
 
 pub struct AgentJob {
@@ -16,6 +17,9 @@ pub struct AgentJob {
     pub user_text: String,
     /// `None` runs the offline rule engine.
     pub client: Option<Box<dyn LlmClient>>,
+    /// Offline conditions accumulated by the panel; `None` reads them from
+    /// `user_text` alone.
+    pub constraints: Option<Constraints>,
 }
 
 pub struct AgentHandle {
@@ -44,6 +48,7 @@ pub fn spawn(job: AgentJob) -> AgentHandle {
             history,
             user_text,
             client,
+            constraints,
         } = job;
         // A closed receiver just means the UI went away; nothing to report.
         let mut emit = |event: AgentEvent| {
@@ -58,7 +63,10 @@ pub fn spawn(job: AgentJob) -> AgentHandle {
                 &mut emit,
                 &flag,
             ),
-            None => run_offline_turn(&ctx, &user_text, super::session::DEFAULT_TOP, &mut emit),
+            None => match constraints {
+                Some(constraints) => run_offline_with(&ctx, &constraints, &mut emit),
+                None => run_offline_turn(&ctx, &user_text, super::session::DEFAULT_TOP, &mut emit),
+            },
         }
     });
     AgentHandle { receiver, cancel }
@@ -87,6 +95,7 @@ mod tests {
             history: Vec::new(),
             user_text: "computer vision".into(),
             client: None,
+            constraints: None,
         });
         let mut saw_recommendations = false;
         loop {

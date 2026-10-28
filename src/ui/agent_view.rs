@@ -108,7 +108,7 @@ fn prefixed(
     }
 }
 
-fn tier_style(tier: Tier) -> Style {
+pub(crate) fn tier_style(tier: Tier) -> Style {
     let color = match tier {
         Tier::Stretch => theme::ERROR,
         Tier::Main => theme::WARNING,
@@ -390,12 +390,19 @@ pub fn render_agent(
             cards.push((index, line));
         }
     }
+    let conditions = app
+        .agent
+        .recommendations
+        .as_ref()
+        .map(|set| set.conditions.clone())
+        .unwrap_or_default();
+    let header_rows = if conditions.is_empty() { 1 } else { 2 };
     let cards_height = if cards.is_empty() {
         0
     } else {
         // Compact cards are two lines each; leave the transcript at least
         // four rows above them.
-        ((cards.len() + 1) as u16)
+        ((cards.len() + header_rows) as u16)
             .min(inner.height.saturating_sub(6))
             .max(3)
     };
@@ -471,11 +478,31 @@ pub fn render_agent(
             ))),
             Rect::new(cards_area.x, cards_area.y, cards_area.width, 1),
         );
+        if header_rows == 2 && cards_area.height > 2 {
+            let label = lang.pick("Conditions: ", "条件：");
+            let hint = lang.pick("  (/reset clears)", "  （/reset 清空）");
+            let text = truncate(
+                &format!("{label}{}", conditions.join(" · ")),
+                width.saturating_sub(text_width(hint)),
+            );
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(text, Style::new().fg(theme::ACCENT)),
+                    Span::styled(hint, theme::DIM),
+                ])),
+                Rect::new(cards_area.x, cards_area.y + 1, cards_area.width, 1),
+            );
+        }
+        let skip = if header_rows == 2 && cards_area.height > 2 {
+            2
+        } else {
+            1
+        };
         let body = Rect::new(
             cards_area.x,
-            cards_area.y + 1,
+            cards_area.y + skip,
             cards_area.width,
-            cards_area.height.saturating_sub(1),
+            cards_area.height.saturating_sub(skip),
         );
         let page = body.height as usize;
         // Keep the selected card (all of its lines) in view.

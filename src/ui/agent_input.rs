@@ -79,6 +79,24 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         zh: "切换中英文",
     },
     SlashCommand {
+        name: "only",
+        args: "",
+        en: "Table shows only the recommendations (again: all)",
+        zh: "表格只显示推荐的会议（再次执行恢复）",
+    },
+    SlashCommand {
+        name: "reset",
+        args: "",
+        en: "Forget follow-up conditions (rank, count, exclusions…)",
+        zh: "清空追问条件（等级、数量、排除…）",
+    },
+    SlashCommand {
+        name: "forget",
+        args: "",
+        en: "Delete the saved session (history, last cards)",
+        zh: "删除保存的会话（输入历史、上次推荐）",
+    },
+    SlashCommand {
         name: "clear",
         args: "",
         en: "Clear the conversation",
