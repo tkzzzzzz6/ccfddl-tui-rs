@@ -24,6 +24,7 @@ use crate::agent::{Lang, Recommendation};
 use crate::data::ConferenceRow;
 
 use super::agent_input::SLASH_COMMANDS;
+use super::agent_results::PanelSize;
 use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
@@ -161,6 +162,11 @@ pub struct AgentPanel {
     pub card_cursor: usize,
     /// Show the details of the selected card (`d` toggles).
     pub card_details: bool,
+    /// The last few recommendation rounds, oldest first.
+    pub rounds: Vec<RecommendationSet>,
+    /// Which round `recommendations` shows.
+    pub round_cursor: usize,
+    pub panel_size: PanelSize,
     /// Transcript lines scrolled up from the bottom.
     pub scroll: usize,
     pub profile: Profile,
@@ -204,7 +210,10 @@ impl AgentPanel {
             handle: None,
             recommendations: None,
             card_cursor: 0,
-            card_details: true,
+            card_details: false,
+            rounds: Vec::new(),
+            round_cursor: 0,
+            panel_size: PanelSize::Half,
             scroll: 0,
             profile: Profile::default(),
             profile_path,
@@ -450,6 +459,24 @@ impl App {
         self.agent.ensure_profile(lang);
         self.agent.entries.push(Entry::User(text.to_string()));
         self.agent.scroll = 0;
+        // Offline, a question about one conference is answered from the
+        // rules right away instead of producing a new set of cards.
+        if self.agent.llm.is_none() {
+            let answer = crate::agent::explain::answer(
+                &crate::agent::recommend::Request {
+                    conferences: self.service.conferences(),
+                    favorites: self.service.favorites(),
+                    profile: &self.agent.profile,
+                    now: Utc::now(),
+                    lang,
+                },
+                text,
+            );
+            if let Some(answer) = answer {
+                self.agent.entries.push(Entry::Assistant(answer));
+                return;
+            }
+        }
         let ctx = ToolContext::new(
             self.service.conferences().to_vec(),
             self.service.favorites().clone(),
@@ -535,8 +562,7 @@ impl App {
                     set.summary.clone()
                 };
                 panel.entries.push(Entry::Assistant(summary));
-                panel.recommendations = Some(set);
-                panel.card_cursor = 0;
+                panel.push_recommendations(set);
             }
             AgentEvent::Finished { history } => {
                 if !history.is_empty() {
@@ -678,6 +704,8 @@ impl App {
                 self.agent.entries.clear();
                 self.agent.history.clear();
                 self.agent.recommendations = None;
+                self.agent.rounds.clear();
+                self.agent.round_cursor = 0;
                 self.agent.card_cursor = 0;
                 self.agent
                     .info(lang.pick("Conversation cleared.", "对话已清空。"));
@@ -858,8 +886,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · i or Esc back to input · Tab table",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · i 或 Esc 回到输入 · Tab 表格",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }

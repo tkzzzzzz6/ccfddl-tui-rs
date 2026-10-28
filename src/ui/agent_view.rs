@@ -66,6 +66,25 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     out
 }
 
+/// Cut `text` to `width` cells, ending with `…` when shortened.
+fn truncate(text: &str, width: usize) -> String {
+    if text_width(text) <= width {
+        return text.to_string();
+    }
+    let mut out = String::new();
+    let mut used = 0;
+    for c in text.chars() {
+        let w = char_width(c);
+        if used + w + 1 > width {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out.push('…');
+    out
+}
+
 /// Wrap `text` with `first` as the prefix of the first line and spaces of
 /// the same width on following lines.
 fn prefixed(
@@ -242,6 +261,13 @@ fn card_lines(
     }
     let mut lines = vec![Line::from(header)];
     if !expanded {
+        // Compact: one line of reasoning under the title line.
+        let reason = item.reason.replace('\n', " ");
+        let text = truncate(&reason, width.saturating_sub(4));
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(text, theme::DIM),
+        ]));
         return lines;
     }
 
@@ -367,8 +393,10 @@ pub fn render_agent(
     let cards_height = if cards.is_empty() {
         0
     } else {
+        // Compact cards are two lines each; leave the transcript at least
+        // four rows above them.
         ((cards.len() + 1) as u16)
-            .min(inner.height.saturating_sub(4) * 3 / 5)
+            .min(inner.height.saturating_sub(6))
             .max(3)
     };
     let quick = app.quick_actions_visible();
@@ -421,12 +449,16 @@ pub fn render_agent(
             Some(Source::Llm(model)) => model.clone(),
             _ => lang.pick("offline rules", "离线规则").to_string(),
         };
-        let title = match (cards_focused, lang) {
-            (true, Lang::Zh) => format!("推荐 {} 个 · {source}", items.len()),
-            (true, Lang::En) => format!("{} picks · {source}", items.len()),
-            (false, Lang::Zh) => format!("推荐 {} 个 · {source} · Tab 进入卡片区", items.len()),
-            (false, Lang::En) => format!("{} picks · {source} · Tab to the cards", items.len()),
+        let mut title = match lang {
+            Lang::Zh => format!("推荐 {} 个 · {source}", items.len()),
+            Lang::En => format!("{} picks · {source}", items.len()),
         };
+        if let Some(round) = app.round_label() {
+            title = format!("{title} · {round}");
+        }
+        if !cards_focused {
+            title.push_str(lang.pick(" · Tab to the cards", " · Tab 进入卡片区"));
+        }
         let title_style = if cards_focused {
             theme::TITLE_STYLE
         } else {
@@ -845,11 +877,70 @@ mod tests {
             footer.contains("Show in table") && footer.contains("Details"),
             "{footer}"
         );
-        // The detail lines follow the `d` toggle.
-        assert!(lines.iter().any(|l| l.contains(" Due ")), "{lines:?}");
+        // Compact by default; the detail lines follow the `d` toggle.
+        assert!(!lines.iter().any(|l| l.contains(" Due ")), "{lines:?}");
         app.toggle_card_details();
         let (terminal, _) = draw_app(&mut app, 140, 30);
-        assert!(!screen(&terminal).iter().any(|l| l.contains(" Due ")));
+        assert!(screen(&terminal).iter().any(|l| l.contains(" Due ")));
+    }
+
+    #[test]
+    fn eight_compact_cards_fit_a_100_by_30_terminal() {
+        use crate::agent::recommend::Source;
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.profile.horizon_days = 100_000;
+        app.agent.input.set("computer vision database");
+        app.submit_agent_input();
+        while app.agent.is_busy() {
+            app.poll_agent();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // Eight cards, as the recommender produces by default.
+        let mut set = app.agent.recommendations.clone().unwrap();
+        let one = set.items[0].clone();
+        set.items = (0..8).map(|_| one.clone()).collect();
+        set.source = Source::Rules;
+        app.agent.push_recommendations(set);
+        app.focus = Focus::AgentCards;
+
+        let (terminal, view) = draw_app(&mut app, 100, 30);
+        let shown: std::collections::BTreeSet<usize> =
+            view.layout.agent_cards.iter().map(|(_, i)| *i).collect();
+        assert_eq!(shown.len(), 8, "{:?}", screen(&terminal));
+        // Two lines per card: the title line and one line of reasoning.
+        assert_eq!(view.layout.agent_cards.len(), 16);
+    }
+
+    #[test]
+    fn full_size_panel_hides_the_table_while_focused() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        let (_, view) = draw_app(&mut app, 160, 30);
+        let half = view.layout.agent.unwrap();
+        assert!(half.width < 100, "{half:?}");
+        assert!(view.layout.table.width > 0);
+
+        app.cycle_panel_size();
+        let (_, view) = draw_app(&mut app, 160, 30);
+        assert_eq!(view.layout.agent.unwrap().width, 160);
+        assert_eq!(view.layout.table.width, 0);
+
+        // The table comes back when it takes the focus.
+        app.focus = Focus::Table;
+        let (_, view) = draw_app(&mut app, 160, 30);
+        assert!(view.layout.table.width > 0);
+    }
+
+    #[test]
+    fn truncate_marks_cut_text() {
+        assert_eq!(truncate("short", 10), "short");
+        assert_eq!(truncate("abcdefghij", 5), "abcd…");
+        assert_eq!(truncate("会议推荐理由", 5), "会议…");
     }
 
     #[test]
