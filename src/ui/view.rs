@@ -35,6 +35,8 @@ pub struct LayoutMap {
     pub agent_cards: Vec<(Rect, usize)>,
     /// Rows of the slash-command popup, by match index.
     pub agent_completions: Vec<(Rect, usize)>,
+    /// First-screen shortcuts, by index.
+    pub agent_quick: Vec<(Rect, usize)>,
 }
 
 #[derive(Default)]

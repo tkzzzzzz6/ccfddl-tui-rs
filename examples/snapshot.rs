@@ -84,6 +84,9 @@ fn main() {
         app.agent.input.set(text);
         app.agent.input_edited();
     }
+    if args.iter().any(|a| a == "--cards") {
+        app.focus = ui::Focus::AgentCards;
+    }
     if args.iter().any(|a| a == "--card-2") {
         app.move_card(1);
     }

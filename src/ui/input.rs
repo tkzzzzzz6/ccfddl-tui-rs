@@ -48,6 +48,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Outcome {
         Focus::Sidebar => sidebar_key(app, key),
         Focus::Table => table_key(app, key),
         Focus::Agent => agent_key(app, key),
+        Focus::AgentCards => agent_cards_key(app, key),
     }
 }
 
@@ -121,37 +122,65 @@ fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
     Outcome::Continue
 }
 
-/// Agent panel: editing keys go to the line editor, like the search field.
-/// Up/Down browse the input history (or the `/command` popup); cards move
-/// with Alt+Up/Down. Card actions use Ctrl so they never collide with typing.
+/// Agent input: editing keys go to the line editor, like the search field.
+/// Up/Down browse the input history (or the `/command` popup); Tab moves on
+/// to the cards. Number keys run the first-screen shortcuts.
 fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let alt = key.modifiers.contains(KeyModifiers::ALT);
     let popup = app.agent.completion_visible();
     match key.code {
         KeyCode::Esc if popup => app.agent.dismiss_completion(),
         KeyCode::Esc => app.agent_escape(),
         KeyCode::Enter => app.submit_agent_input(),
         KeyCode::Tab if popup => app.agent.accept_completion(),
-        KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Table,
-        KeyCode::Up if alt => app.move_card(-1),
-        KeyCode::Down if alt => app.move_card(1),
+        KeyCode::Tab => app.focus_next_from_input(),
+        KeyCode::BackTab => app.focus = Focus::Table,
         KeyCode::Up if popup => app.agent.move_completion(-1),
         KeyCode::Down if popup => app.agent.move_completion(1),
         KeyCode::Up => app.agent.history_prev(),
         KeyCode::Down => app.agent.history_next(),
         KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
-        KeyCode::Char('f') if ctrl => app.toggle_card_favorite(),
-        KeyCode::Char('o') if ctrl => {
-            app.open_card_url();
-        }
         KeyCode::Char('l') if ctrl => app.toggle_language(),
+        KeyCode::Char(c @ '1'..='4') if !ctrl && app.quick_actions_visible() => {
+            app.run_quick_action(c as usize - '1' as usize);
+        }
         _ => {
             if app.agent.input.handle_key(key) {
                 app.agent.input_edited();
             }
         }
+    }
+    Outcome::Continue
+}
+
+/// Recommendation cards: the same keys as the conference table.
+fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
+    match key.code {
+        KeyCode::Char('q') => return Outcome::Quit,
+        KeyCode::Char('j') | KeyCode::Down => app.move_card(1),
+        KeyCode::Char('k') | KeyCode::Up => app.move_card(-1),
+        KeyCode::Char('g') | KeyCode::Home => app.move_card(isize::MIN / 2),
+        KeyCode::Char('G') | KeyCode::End => app.move_card(isize::MAX / 2),
+        KeyCode::Enter => app.jump_to_card(),
+        KeyCode::Char('f') => app.toggle_card_favorite(),
+        KeyCode::Char('o') => {
+            app.open_card_url();
+        }
+        KeyCode::Char('d') => app.toggle_card_details(),
+        KeyCode::Char('l') => app.toggle_language(),
+        KeyCode::Char('/') => {
+            app.focus_agent_input();
+            if app.agent.input.is_empty() {
+                app.agent.input.insert_char('/');
+                app.agent.input_edited();
+            }
+        }
+        KeyCode::Char('i') | KeyCode::Esc | KeyCode::BackTab => app.focus_agent_input(),
+        KeyCode::Tab => app.focus = Focus::Table,
+        KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
+        KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
+        _ => {}
     }
     Outcome::Continue
 }
@@ -170,7 +199,7 @@ pub fn handle_paste(app: &mut App, text: &str) -> Outcome {
                 .collect();
             app.search_input.push_str(&line);
         }
-        Focus::Table | Focus::Sidebar => {}
+        Focus::Table | Focus::Sidebar | Focus::AgentCards => {}
     }
     Outcome::Continue
 }
@@ -240,17 +269,31 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         .find(|(area, _)| area.contains(point))
     {
         // First click selects a card, a second click shows it in the table.
-        if app.focus == Focus::Agent && app.agent.card_cursor == index {
+        if app.focus == Focus::AgentCards && app.agent.card_cursor == index {
             app.jump_to_card();
             view.sync_table(app);
         } else {
             app.agent.card_cursor = index;
-            app.focus = Focus::Agent;
+            app.focus = Focus::AgentCards;
         }
         return Outcome::Continue;
     }
-    if view.layout.agent.is_some_and(|area| area.contains(point)) {
+    if let Some(&(_, index)) = view
+        .layout
+        .agent_quick
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
         app.focus = Focus::Agent;
+        app.run_quick_action(index);
+        return Outcome::Continue;
+    }
+    if view.layout.agent.is_some_and(|area| area.contains(point)) {
+        app.focus = if view.layout.agent_cards_area.contains(point) && app.has_cards() {
+            Focus::AgentCards
+        } else {
+            Focus::Agent
+        };
         return Outcome::Continue;
     }
 
@@ -770,8 +813,8 @@ mod tests {
         assert_eq!(handle_paste(&mut app, "x"), Outcome::Continue);
     }
 
-    #[test]
-    fn alt_arrows_move_between_cards() {
+    /// Opens the agent and runs an offline request that yields several cards.
+    fn app_with_cards() -> App {
         let mut app = app();
         press(&mut app, KeyCode::Char('a'));
         // The fixture deadlines are years away.
@@ -790,13 +833,102 @@ mod tests {
             .as_ref()
             .map_or(0, |s| s.items.len());
         assert!(count >= 2, "{count}");
-        press_mod(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        app
+    }
+
+    #[test]
+    fn tab_moves_from_input_to_cards_to_table() {
+        let mut app = app_with_cards();
+        assert_eq!(app.focus, Focus::Agent);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::AgentCards);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::Table);
+        press(&mut app, KeyCode::Char('a'));
+        assert_eq!(app.focus, Focus::Agent);
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.focus, Focus::Table);
+
+        // Without cards, Tab goes straight to the table.
+        let mut fresh = self::app();
+        press(&mut fresh, KeyCode::Char('a'));
+        press(&mut fresh, KeyCode::Tab);
+        assert_eq!(fresh.focus, Focus::Table);
+    }
+
+    #[test]
+    fn card_keys_mirror_the_table() {
+        let mut app = app_with_cards();
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.agent.card_cursor, 1);
-        press_mod(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Up);
         assert_eq!(app.agent.card_cursor, 0);
-        // Plain Up is history now.
+        press(&mut app, KeyCode::Char('G'));
+        let last = app.agent.recommendations.as_ref().unwrap().items.len() - 1;
+        assert_eq!(app.agent.card_cursor, last);
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.agent.card_cursor, 0);
+
+        let title = app.agent.selected_card().unwrap().facts.title.clone();
+        press(&mut app, KeyCode::Char('f'));
+        assert!(app.service.is_favorite(&title, 2030));
+        assert!(app.agent.input.is_empty(), "f is not typed in the cards");
+
+        assert!(app.agent.card_details);
+        press(&mut app, KeyCode::Char('d'));
+        assert!(!app.agent.card_details);
+
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.focus, Focus::Table);
+        assert_eq!(app.selected_row().unwrap().title, title);
+    }
+
+    #[test]
+    fn leaving_the_cards_returns_to_the_input() {
+        let mut app = app_with_cards();
+        for key in [KeyCode::Char('i'), KeyCode::Esc, KeyCode::BackTab] {
+            app.focus = Focus::AgentCards;
+            press(&mut app, key);
+            assert_eq!(app.focus, Focus::Agent, "{key:?}");
+        }
+        app.focus = Focus::AgentCards;
+        press(&mut app, KeyCode::Char('/'));
+        assert_eq!(app.focus, Focus::Agent);
+        assert_eq!(app.agent.input, "/");
+        assert!(app.agent.completion_visible());
+
+        app.focus = Focus::AgentCards;
+        assert_eq!(press(&mut app, KeyCode::Char('q')), Outcome::Quit);
+    }
+
+    #[test]
+    fn old_ctrl_and_alt_card_chords_are_gone() {
+        let mut app = app_with_cards();
+        press_ctrl(&mut app, 'f');
+        press_mod(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.agent.card_cursor, 0);
+        let title = app.agent.selected_card().unwrap().facts.title.clone();
+        assert!(!app.service.is_favorite(&title, 2030));
+        // Plain Up is history.
         press(&mut app, KeyCode::Up);
         assert_eq!(app.agent.input, "computer vision database");
+    }
+
+    #[test]
+    fn number_keys_run_shortcuts_only_on_an_empty_first_screen() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        assert!(app.quick_actions_visible());
+        press(&mut app, KeyCode::Char('3'));
+        assert!(app.agent.wizard.is_some(), "3 starts /init");
+
+        let mut fresh = self::app();
+        press(&mut fresh, KeyCode::Char('a'));
+        type_text(&mut fresh, "top 3");
+        assert_eq!(fresh.agent.input, "top 3");
+        assert!(fresh.agent.wizard.is_none());
     }
 
     #[test]
