@@ -1,0 +1,107 @@
+{
+ "steps": [
+  {
+   "wait": 4,
+   "hold": 1.8,
+   "shot": "main.png"
+  },
+  {
+   "keys": "j",
+   "wait": 0.25,
+   "hold": 0.35
+  },
+  {
+   "keys": "j",
+   "wait": 0.25,
+   "hold": 0.35
+  },
+  {
+   "keys": "j",
+   "wait": 0.25,
+   "hold": 0.5
+  },
+  {
+   "keys": "/",
+   "wait": 0.4,
+   "hold": 0.4
+  },
+  {
+   "keys": "cvpr",
+   "type": true,
+   "wait": 0.4,
+   "hold": 0.6
+  },
+  {
+   "keys": "\r",
+   "wait": 0.5,
+   "hold": 1.2,
+   "shot": "search.png"
+  },
+  {
+   "keys": "g",
+   "wait": 0.3,
+   "hold": 0.6
+  },
+  {
+   "keys": "d",
+   "wait": 0.5,
+   "hold": 2.2,
+   "shot": "details.png"
+  },
+  {
+   "keys": "d",
+   "wait": 0.4,
+   "hold": 0.3
+  },
+  {
+   "keys": "a",
+   "wait": 0.8,
+   "hold": 1.8,
+   "shot": "agent-home.png"
+  },
+  {
+   "keys": "我做多模态大模型，2027-03-01 能写完",
+   "type": true,
+   "wait": 0.5,
+   "hold": 0.8
+  },
+  {
+   "keys": "\r",
+   "wait": 2.5,
+   "hold": 2.8,
+   "shot": "agent-recs.png"
+  },
+  {
+   "keys": "\t",
+   "wait": 0.5,
+   "hold": 0.6
+  },
+  {
+   "keys": "\u001bOQ",
+   "wait": 0.6,
+   "hold": 1.0
+  },
+  {
+   "keys": "j",
+   "wait": 0.4,
+   "hold": 0.5
+  },
+  {
+   "keys": "d",
+   "wait": 0.5,
+   "hold": 2.8,
+   "shot": "agent-card.png"
+  },
+  {
+   "keys": "?",
+   "wait": 0.5,
+   "hold": 1.4
+  },
+  {
+   "keys": "\r",
+   "wait": 2.0,
+   "hold": 4.0,
+   "shot": "agent-why.png"
+  }
+ ]
+}

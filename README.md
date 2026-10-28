@@ -1,5 +1,13 @@
 # CCF-Deadlines TUI (Rust)
 
+[![CI](https://github.com/tkzzzzzz6/ccfddl-tui-rs/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/tkzzzzzz6/ccfddl-tui-rs/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/tkzzzzzz6/ccfddl-tui-rs?logo=github)](https://github.com/tkzzzzzz6/ccfddl-tui-rs/releases/latest)
+[![crates.io](https://img.shields.io/crates/v/ccfddl-tui.svg?logo=rust)](https://crates.io/crates/ccfddl-tui)
+[![Downloads](https://img.shields.io/crates/d/ccfddl-tui.svg)](https://crates.io/crates/ccfddl-tui)
+[![MSRV](https://img.shields.io/badge/rustc-1.88%2B-orange.svg)](Cargo.toml)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#installation)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A terminal UI for tracking CCF-ranked conference deadlines with live countdowns.
 
 This repository is an independently maintained derivative of
@@ -11,8 +19,14 @@ snapshots generated from the upstream code.
 
 ## Demo
 
-These images are rendered from real application frames using the embedded
-conference data.
+A real recording of the release binary (embedded data, no API key): browse the
+table, search for CVPR, open its details, then ask the recommendation agent
+"我做多模态大模型，2027-03-01 能写完", open a card and ask why it was picked.
+
+![ccfddl-tui demo: table, search, details and the recommendation agent](assets/demo.gif)
+
+<details>
+<summary>Screenshots</summary>
 
 ### Main interface
 
@@ -25,6 +39,12 @@ conference data.
 ### Conference details
 
 ![CVPR conference details and deadline information](assets/demo-details.png)
+
+### Recommendation agent
+
+![Offline recommendations grouped into stretch, main and safe picks, with one card expanded](assets/demo-agent.png)
+
+</details>
 
 ## Status
 
@@ -41,8 +61,6 @@ conference data.
 | Conference recommendation agent | offline rules, optional LLM tool loop, TUI panel |
 
 ## Installation
-
-[![crates.io](https://img.shields.io/crates/v/ccfddl-tui.svg)](https://crates.io/crates/ccfddl-tui)
 
 Install from [crates.io](https://crates.io/crates/ccfddl-tui) with Cargo. This
 requires a Rust toolchain ([rustup.rs](https://rustup.rs)) and works on macOS
@@ -384,10 +402,18 @@ cargo run --example snapshot -- --wide --agent "computer vision"  # ... agent pa
 ```
 
 The `snapshot` example renders through `TestBackend`, so it needs no terminal and
-is the quickest way to eyeball a layout change. The README demo images are real
-application-window screenshots, not generated previews. To refresh them, capture
-the main, search and details views and save the PNGs as `assets/demo-main.png`,
-`assets/demo-search.png`, and `assets/demo-details.png`.
+is the quickest way to eyeball a layout change. The README demo is recorded from the real
+release binary, not generated previews. `scripts/demo/record.py` runs it in a
+pseudo-terminal with an empty `HOME`, sends the keys in
+`scripts/demo/scenario.json` and renders every frame (Unix; needs `pyte`,
+`pillow`, `fonttools`, `ffmpeg`, DejaVu and Noto CJK fonts):
+
+```bash
+cargo build --release
+python3 scripts/demo/record.py target/release/ccfddl-tui /tmp/demo scripts/demo/scenario.json
+# then copy demo.gif and main.png / search.png / details.png / agent-card.png
+# to assets/demo.gif and assets/demo-{main,search,details,agent}.png
+```
 
 `tests/fixtures/gen_golden.py` regenerates `tests/fixtures/golden.json` from the
 Python implementation; re-run it only when the Python behaviour itself changes.
