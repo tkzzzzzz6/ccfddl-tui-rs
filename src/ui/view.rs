@@ -33,6 +33,8 @@ pub struct LayoutMap {
     pub agent_input: Rect,
     /// Rendered lines of each recommendation card, by card index.
     pub agent_cards: Vec<(Rect, usize)>,
+    /// Rows of the slash-command popup, by match index.
+    pub agent_completions: Vec<(Rect, usize)>,
 }
 
 #[derive(Default)]

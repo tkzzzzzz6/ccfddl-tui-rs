@@ -121,19 +121,25 @@ fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
     Outcome::Continue
 }
 
-/// Agent panel: printable keys go to the input, like the search field.
-/// Card actions use Ctrl so they never collide with typing.
+/// Agent panel: editing keys go to the line editor, like the search field.
+/// Up/Down browse the input history (or the `/command` popup); cards move
+/// with Alt+Up/Down. Card actions use Ctrl so they never collide with typing.
 fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let popup = app.agent.completion_visible();
     match key.code {
+        KeyCode::Esc if popup => app.agent.dismiss_completion(),
         KeyCode::Esc => app.agent_escape(),
         KeyCode::Enter => app.submit_agent_input(),
-        KeyCode::Backspace => {
-            app.agent.input.pop();
-        }
+        KeyCode::Tab if popup => app.agent.accept_completion(),
         KeyCode::Tab | KeyCode::BackTab => app.focus = Focus::Table,
-        KeyCode::Up => app.move_card(-1),
-        KeyCode::Down => app.move_card(1),
+        KeyCode::Up if alt => app.move_card(-1),
+        KeyCode::Down if alt => app.move_card(1),
+        KeyCode::Up if popup => app.agent.move_completion(-1),
+        KeyCode::Down if popup => app.agent.move_completion(1),
+        KeyCode::Up => app.agent.history_prev(),
+        KeyCode::Down => app.agent.history_next(),
         KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
         KeyCode::Char('f') if ctrl => app.toggle_card_favorite(),
@@ -141,9 +147,30 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
             app.open_card_url();
         }
         KeyCode::Char('l') if ctrl => app.toggle_language(),
-        KeyCode::Char(_) if ctrl => {}
-        KeyCode::Char(c) => app.agent.input.push(c),
-        _ => {}
+        _ => {
+            if app.agent.input.handle_key(key) {
+                app.agent.input_edited();
+            }
+        }
+    }
+    Outcome::Continue
+}
+
+/// A bracketed paste: inserted at the cursor, never submitted.
+pub fn handle_paste(app: &mut App, text: &str) -> Outcome {
+    match app.focus {
+        Focus::Agent => {
+            app.agent.input.insert_str(text);
+            app.agent.input_edited();
+        }
+        Focus::Search => {
+            let line: String = text
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            app.search_input.push_str(&line);
+        }
+        Focus::Table | Focus::Sidebar => {}
     }
     Outcome::Continue
 }
@@ -195,6 +222,17 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
 
+    if let Some(&(_, index)) = view
+        .layout
+        .agent_completions
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        app.agent.completion_cursor = index;
+        app.agent.accept_completion();
+        app.focus = Focus::Agent;
+        return Outcome::Continue;
+    }
     if let Some(&(_, index)) = view
         .layout
         .agent_cards
@@ -627,6 +665,138 @@ mod tests {
         press(&mut app, KeyCode::Esc);
         assert!(!app.agent.open);
         assert_eq!(app.focus, Focus::Table);
+    }
+
+    fn press_mod(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Outcome {
+        handle_key(
+            app,
+            KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            },
+        )
+    }
+
+    fn type_text(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    #[test]
+    fn agent_input_supports_cursor_editing() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "多模型");
+        press(&mut app, KeyCode::Left);
+        press(&mut app, KeyCode::Left);
+        type_text(&mut app, "态大");
+        assert_eq!(app.agent.input, "多态大模型");
+        press(&mut app, KeyCode::Home);
+        press(&mut app, KeyCode::Delete);
+        press(&mut app, KeyCode::End);
+        type_text(&mut app, " for vision");
+        press_ctrl(&mut app, 'w');
+        assert_eq!(app.agent.input, "态大模型 for ");
+        press_ctrl(&mut app, 'u');
+        assert!(app.agent.input.is_empty());
+    }
+
+    #[test]
+    fn up_and_down_browse_sent_inputs() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "/help");
+        press(&mut app, KeyCode::Esc); // close the popup
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "/profile");
+        press(&mut app, KeyCode::Esc);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "draft");
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.agent.input, "/profile");
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.agent.input, "/help");
+        press(&mut app, KeyCode::Down);
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.agent.input, "draft");
+    }
+
+    #[test]
+    fn slash_popup_completes_with_tab_and_closes_with_esc() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "/ex");
+        assert!(app.agent.completion_visible());
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.agent.input, "/export ");
+        assert_eq!(app.focus, Focus::Agent, "Tab completed instead of leaving");
+
+        press_ctrl(&mut app, 'u');
+        type_text(&mut app, "/");
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.agent.completion_cursor, 1);
+        // Esc only closes the popup; the input and the panel stay.
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.agent.completion_visible());
+        assert_eq!(app.agent.input, "/");
+        assert!(app.agent.open);
+        // Without a popup Tab goes back to the table.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::Table);
+    }
+
+    #[test]
+    fn paste_inserts_without_sending() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "ab");
+        press(&mut app, KeyCode::Left);
+        handle_paste(&mut app, "line one\nline two\n");
+        assert_eq!(app.agent.input, "aline one line two b");
+        assert!(
+            !app.agent
+                .entries
+                .iter()
+                .any(|e| matches!(e, crate::ui::agent::Entry::User(_)))
+        );
+
+        app.focus = Focus::Search;
+        handle_paste(&mut app, "cv\npr");
+        assert_eq!(app.search_input, "cv pr");
+        app.focus = Focus::Table;
+        assert_eq!(handle_paste(&mut app, "x"), Outcome::Continue);
+    }
+
+    #[test]
+    fn alt_arrows_move_between_cards() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        // The fixture deadlines are years away.
+        app.agent.profile.horizon_days = 100_000;
+        type_text(&mut app, "computer vision database");
+        press(&mut app, KeyCode::Enter);
+        let start = std::time::Instant::now();
+        while app.agent.is_busy() {
+            app.poll_agent();
+            assert!(start.elapsed() < std::time::Duration::from_secs(10));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let count = app
+            .agent
+            .recommendations
+            .as_ref()
+            .map_or(0, |s| s.items.len());
+        assert!(count >= 2, "{count}");
+        press_mod(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.agent.card_cursor, 1);
+        press_mod(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        assert_eq!(app.agent.card_cursor, 0);
+        // Plain Up is history now.
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.agent.input, "computer vision database");
     }
 
     #[test]

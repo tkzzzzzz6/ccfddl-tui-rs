@@ -283,14 +283,25 @@ terminals (≥ 120 columns) and replaces it on narrow ones while focused.
 | Key | Action |
 |-----|--------|
 | any character | Type a request (global shortcuts are plain text here) |
+| `←` / `→`, `Home` / `End`, `Ctrl+A` / `Ctrl+E` | Move the cursor |
+| `Ctrl+←` / `Ctrl+→` (or `Alt`) | Move by word |
+| `Backspace` / `Delete` | Delete a character |
+| `Ctrl+W` / `Ctrl+U` / `Ctrl+K` | Delete the previous word / to the start / to the end |
+| `↑` / `↓` | Previous / next sent input; restores your unsent draft |
+| `/` | Show matching commands; `↑` / `↓` choose, `Tab` completes, `Esc` closes the list |
 | `Enter` | Send; on an empty input, show the selected card in the table |
-| `↑` / `↓` | Select a recommendation card |
+| `Alt+↑` / `Alt+↓` | Select a recommendation card |
 | `Ctrl+F` | Toggle favourite of the selected card |
 | `Ctrl+O` | Open the selected conference's website |
 | `Ctrl+L` | Toggle language |
 | `PgUp` / `PgDn` | Scroll the transcript |
 | `Esc` | Stop a running request, leave `/init`, clear the input, then close |
 | `Tab` | Back to the table (the panel stays open) |
+
+The terminal cursor sits at the insertion point, so input methods such as
+Chinese IMEs show their candidate window next to the text. Pasted text is
+inserted at the cursor and never sent by itself: line breaks become spaces
+(bracketed paste; the legacy Windows console does not support it).
 
 Slash commands: `/recommend [note]`, `/init` (five questions that save the
 profile), `/profile`, `/export [path]` (Markdown, default

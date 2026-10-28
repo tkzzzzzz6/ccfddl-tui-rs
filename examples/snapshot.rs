@@ -68,13 +68,21 @@ fn main() {
     if let Some(index) = args.iter().position(|arg| arg == "--agent") {
         app.open_agent();
         if let Some(question) = args.get(index + 1).filter(|q| !q.starts_with("--")) {
-            app.agent.input = question.clone();
+            app.agent.input.set(question);
             app.submit_agent_input();
             while app.agent.is_running() {
                 app.poll_agent();
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
         }
+    }
+    // `--type "/ex"` leaves text in the input (shows the command popup).
+    if let Some(index) = args.iter().position(|arg| arg == "--type")
+        && let Some(text) = args.get(index + 1)
+    {
+        app.open_agent();
+        app.agent.input.set(text);
+        app.agent.input_edited();
     }
     if args.iter().any(|a| a == "--card-2") {
         app.move_card(1);

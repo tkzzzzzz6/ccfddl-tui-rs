@@ -23,9 +23,11 @@ use crate::agent::worker::{self, AgentHandle, AgentJob};
 use crate::agent::{Lang, Recommendation};
 use crate::data::ConferenceRow;
 
+use super::agent_input::SLASH_COMMANDS;
 use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
+use super::line_input::LineInput;
 
 impl From<Language> for Lang {
     fn from(language: Language) -> Self {
@@ -140,7 +142,17 @@ pub type EnvLookup = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
 
 pub struct AgentPanel {
     pub open: bool,
-    pub input: String,
+    pub input: LineInput,
+    /// Sent inputs for Up/Down (never API keys or questionnaire answers).
+    pub input_history: Vec<String>,
+    /// Position while browsing `input_history`; `None` when editing.
+    pub history_index: Option<usize>,
+    /// The unsent text saved when history browsing started.
+    pub history_draft: String,
+    /// Selected row of the slash-command popup.
+    pub completion_cursor: usize,
+    /// Esc closed the popup; it re-opens on the next edit.
+    pub completion_dismissed: bool,
     pub entries: Vec<Entry>,
     /// Conversation sent to the model on the next turn.
     pub history: Vec<ChatMessage>,
@@ -179,7 +191,12 @@ impl AgentPanel {
             .unwrap_or_else(|| PathBuf::from("config.yaml"));
         Self {
             open: false,
-            input: String::new(),
+            input: LineInput::new(),
+            input_history: Vec::new(),
+            history_index: None,
+            history_draft: String::new(),
+            completion_cursor: 0,
+            completion_dismissed: false,
             entries: Vec::new(),
             history: Vec::new(),
             handle: None,
@@ -357,8 +374,12 @@ impl App {
 
     /// Enter in the agent input.
     pub fn submit_agent_input(&mut self) {
-        let text = self.agent.input.trim().to_string();
-        self.agent.input.clear();
+        let text = self.agent.input.take().trim().to_string();
+        self.agent.input_edited();
+        // Keys and questionnaire answers never enter the history.
+        if self.agent.setup.is_none() && self.agent.wizard.is_none() {
+            self.agent.record_history(&text);
+        }
         if self.agent.setup.is_some() {
             self.answer_setup(&text);
             return;
@@ -813,50 +834,17 @@ impl App {
 }
 
 pub fn command_help(lang: Lang) -> String {
-    let rows: [(&str, &str, &str); 11] = [
-        (
-            "/recommend [note]",
-            "Recommend for your profile",
-            "按画像推荐（可附加说明）",
-        ),
-        ("/init", "Set up the research profile", "问答式设置研究画像"),
-        ("/profile", "Show the profile", "查看当前画像"),
-        (
-            "/export [path]",
-            "Save recommendations as Markdown",
-            "导出推荐为 Markdown",
-        ),
-        (
-            "/setup",
-            "Connect a model (provider, key, model)",
-            "配置模型（厂商、Key、模型）",
-        ),
-        (
-            "/model [profile]",
-            "Show or switch saved models",
-            "查看或切换已保存的模型配置",
-        ),
-        (
-            "/model list | set",
-            "List provider models / save one",
-            "列出厂商模型 / 保存所选模型",
-        ),
-        (
-            "/config",
-            "Effective settings and their sources",
-            "查看生效配置及来源",
-        ),
-        ("/lang", "Switch English / Chinese", "切换中英文"),
-        ("/clear", "Clear the conversation", "清空对话"),
-        ("/help", "This list", "显示本帮助"),
-    ];
     let mut text = String::from(lang.pick("Commands:", "命令："));
-    for (command, en, zh) in rows {
-        text.push_str(&format!("\n  {command:<19} {}", lang.pick(en, zh)));
+    for command in SLASH_COMMANDS {
+        text.push_str(&format!(
+            "\n  {:<30} {}",
+            command.usage(),
+            command.description(lang)
+        ));
     }
     text.push_str(lang.pick(
-        "\nKeys: Enter send · Esc stop/close · Tab table · ↑↓ cards · PgUp/PgDn scroll · Ctrl+F favorite · Ctrl+O open link",
-        "\n按键：Enter 发送 · Esc 中断/关闭 · Tab 回到表格 · ↑↓ 选卡片 · PgUp/PgDn 滚动 · Ctrl+F 收藏 · Ctrl+O 打开官网",
+        "\nKeys: Enter send · ↑↓ input history · Tab complete a /command (or go to the table) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · Alt+↑↓ cards · PgUp/PgDn scroll · Ctrl+F favorite · Ctrl+O open link · Esc stop/close",
+        "\n按键：Enter 发送 · ↑↓ 输入历史 · Tab 补全命令（否则回到表格）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · Alt+↑↓ 选卡片 · PgUp/PgDn 滚动 · Ctrl+F 收藏 · Ctrl+O 打开官网 · Esc 中断/关闭",
     ));
     text
 }
@@ -923,7 +911,7 @@ pub(crate) mod tests {
     }
 
     fn type_and_enter(app: &mut App, text: &str) {
-        app.agent.input = text.to_string();
+        app.agent.input.set(text);
         app.submit_agent_input();
     }
 
