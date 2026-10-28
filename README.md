@@ -88,6 +88,7 @@ cargo run --release -- --ask "multimodal LLM, ready 2027-03-01" --zh
 | `Enter` | Open the conference URL in the default browser |
 | `f` | Toggle favourite |
 | `d` | Show / hide conference details |
+| `a` / `A` | Open the recommendation agent / ask it about the selected conference |
 | `s` | Cycle the sort column |
 | `S` | Reverse the sort direction |
 | `l` | Toggle language (EN/ZH) |
@@ -286,6 +287,12 @@ Before the first request the panel offers four shortcuts, run with `1`–`4` or 
 click: recommend for your profile, CCF-A deadlines in the next 30 days (works
 offline), set up the research profile, and connect or switch the model.
 
+In the table, `A` opens the panel with "Evaluate CVPR 2027 for my research"
+ready to send. Offline, questions like that, or "why" questions about a card,
+are answered from the rules: the conference's tier, reasons, direction and
+risks, or which filter (topic, rank, timing) kept it out of your
+recommendations.
+
 **Input**
 
 | Key | Action |
@@ -302,6 +309,7 @@ offline), set up the research profile, and connect or switch the model.
 | `Ctrl+L` | Toggle language |
 | `PgUp` / `PgDn` | Scroll the transcript |
 | `Tab` | To the cards (or the table when there are none) |
+| `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `Esc` | Stop a running request, leave `/setup` or `/init`, clear the input, then close |
 
 **Cards** — the same keys as the conference table
@@ -313,9 +321,12 @@ offline), set up the research profile, and connect or switch the model.
 | `Enter` | Show the conference in the table (filters are reset if they hide it) |
 | `f` | Toggle favourite |
 | `o` | Open the conference website |
-| `d` | Show / hide the details of the selected card |
+| `d` | Show / hide the details of the selected card (cards start compact: a title line and one line of reasoning) |
+| `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
+| `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
 | `i`, `Esc`, `Shift+Tab` | Back to the input (`/` also starts a command) |
 | `Tab` | To the table |
+| `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `q` | Quit |
 
 The terminal cursor sits at the insertion point, so input methods such as
@@ -325,7 +336,7 @@ inserted at the cursor and never sent by itself: line breaks become spaces
 
 Slash commands: `/recommend [note]`, `/init` (five questions that save the
 profile), `/profile`, `/export [path]` (Markdown, default
-`~/.ccfddl/recommendations-<time>.md`), `/setup` (connect a model),
+`~/.ccfddl/recommendations-<time>.md`; exports the round on screen), `/setup` (connect a model),
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
