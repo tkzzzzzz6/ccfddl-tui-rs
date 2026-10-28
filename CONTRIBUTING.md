@@ -101,6 +101,15 @@ Do not push tags, rewrite public history, or publish releases as part of an
 ordinary feature PR. Reviewers may request platform-specific verification for
 terminal, mouse, packaging, or process-execution changes.
 
+### Reviews
+
+Pull requests may be reviewed by AI agents and review bots as well as by
+people. Agent reviews are welcome but advisory: a maintainer must review every
+pull request before it is merged, and an agent merges only when a maintainer
+explicitly asks it to merge that specific pull request. Agent-authored pull
+requests and review comments should say so, and should list what still needs
+manual verification. See `AGENTS.md` for the full rules.
+
 ## CI and releases
 
 Pull requests and branch pushes run `.github/workflows/ci.yml`. Release builds
