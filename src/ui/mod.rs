@@ -6,11 +6,14 @@
 //! the Python implementation and is verified against it by `tests/golden.rs`.
 
 pub mod agent;
+pub mod agent_input;
+pub mod agent_quick;
 pub mod agent_setup;
 pub mod agent_view;
 pub mod app;
 pub mod browser;
 pub mod input;
+pub mod line_input;
 pub mod refresh;
 pub mod render;
 pub mod theme;
@@ -22,7 +25,10 @@ use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use ratatui::DefaultTerminal;
-use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event};
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event,
+};
 use ratatui::crossterm::execute;
 
 pub use app::{App, Focus, Language};
@@ -51,6 +57,29 @@ impl Drop for MouseCaptureGuard {
     }
 }
 
+/// Bracketed paste delivers a paste as one `Event::Paste`, so line breaks in
+/// pasted text are not read as Enter. Best effort: terminals without support
+/// (the legacy Windows console) keep working, just without the guarantee.
+struct BracketedPasteGuard {
+    enabled: bool,
+}
+
+impl BracketedPasteGuard {
+    fn enable() -> Self {
+        Self {
+            enabled: execute!(io::stdout(), EnableBracketedPaste).is_ok(),
+        }
+    }
+}
+
+impl Drop for BracketedPasteGuard {
+    fn drop(&mut self) {
+        if self.enabled {
+            let _ = execute!(io::stdout(), DisableBracketedPaste);
+        }
+    }
+}
+
 /// Run the TUI until the user quits.
 ///
 /// The terminal is restored even when the loop exits early, so a panic or an
@@ -61,7 +90,10 @@ impl Drop for MouseCaptureGuard {
 pub fn run(service: crate::data::DataService, agent: agent::AgentPanel) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     let result = match MouseCaptureGuard::enable() {
-        Ok(_mouse) => event_loop(&mut terminal, App::with_agent(service, agent)),
+        Ok(_mouse) => {
+            let _paste = BracketedPasteGuard::enable();
+            event_loop(&mut terminal, App::with_agent(service, agent))
+        }
         Err(error) => Err(error.into()),
     };
     ratatui::restore();
@@ -94,6 +126,7 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
             let outcome = match event::read()? {
                 Event::Key(key) => input::handle_key(&mut app, key),
                 Event::Mouse(mouse) => input::handle_mouse(&mut app, &mut view, mouse),
+                Event::Paste(text) => input::handle_paste(&mut app, &text),
                 Event::Resize(_, _) => {
                     view.layout = Default::default();
                     Outcome::Continue

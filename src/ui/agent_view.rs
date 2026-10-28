@@ -6,34 +6,23 @@
 
 use chrono::{DateTime, Utc};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::agent::recommend::{Recommendation, Source, Tier};
 use crate::agent::{Lang, topics};
 use crate::format::get_countdown_color;
 
 use super::agent::Entry;
+use super::agent_quick::QuickAction;
 use super::app::{App, Focus};
+use super::line_input::{char_width, text_width};
 use super::theme;
 use super::view::ViewState;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-fn char_width(c: char) -> usize {
-    if c.is_ascii() {
-        usize::from(!c.is_ascii_control())
-    } else {
-        let mut buf = [0u8; 4];
-        Span::raw(&*c.encode_utf8(&mut buf)).width()
-    }
-}
-
-pub fn text_width(text: &str) -> usize {
-    text.chars().map(char_width).sum()
-}
 
 /// Greedy wrap by display width. ASCII words are kept whole when possible;
 /// CJK text breaks between any two characters.
@@ -202,6 +191,8 @@ fn card_lines(
     app: &App,
     item: &Recommendation,
     selected: bool,
+    expanded: bool,
+    highlighted: bool,
     width: usize,
     now: DateTime<Utc>,
 ) -> Vec<Line<'static>> {
@@ -240,7 +231,7 @@ fn card_lines(
         Span::styled(countdown, countdown_style),
         favorite,
     ];
-    if selected {
+    if selected && highlighted {
         header = header
             .into_iter()
             .map(|span| {
@@ -250,7 +241,7 @@ fn card_lines(
             .collect();
     }
     let mut lines = vec![Line::from(header)];
-    if !selected {
+    if !expanded {
         return lines;
     }
 
@@ -330,6 +321,8 @@ pub fn render_agent(
     let lang: Lang = app.language.into();
     view.layout.agent = Some(area);
     let focused = app.focus == Focus::Agent;
+    let cards_focused = app.focus == Focus::AgentCards;
+    let panel_focused = focused || cards_focused;
     let status = if app.agent.is_busy() {
         lang.pick(" working ", " 运行中 ")
     } else {
@@ -338,7 +331,7 @@ pub fn render_agent(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if focused {
+        .border_style(if panel_focused {
             Style::new().fg(theme::PRIMARY)
         } else {
             theme::DIM
@@ -366,7 +359,8 @@ pub fn render_agent(
     let mut cards: Vec<(usize, Line<'static>)> = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let selected = index == app.agent.card_cursor;
-        for line in card_lines(app, item, selected, width, now) {
+        let expanded = selected && app.agent.card_details;
+        for line in card_lines(app, item, selected, expanded, cards_focused, width, now) {
             cards.push((index, line));
         }
     }
@@ -377,12 +371,22 @@ pub fn render_agent(
             .min(inner.height.saturating_sub(4) * 3 / 5)
             .max(3)
     };
-    let [transcript_area, cards_area, input_area] = Layout::vertical([
+    let quick = app.quick_actions_visible();
+    let quick_height = if quick {
+        (QuickAction::ALL.len() as u16 + 1).min(inner.height.saturating_sub(4))
+    } else {
+        0
+    };
+    let [transcript_area, quick_area, cards_area, input_area] = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(quick_height),
         Constraint::Length(cards_height),
         Constraint::Length(2),
     ])
     .areas(inner);
+    if quick_height > 0 {
+        render_quick_actions(frame, app, view, quick_area, lang);
+    }
     view.layout.agent_transcript = transcript_area;
     view.layout.agent_cards_area = cards_area;
     view.layout.agent_input = input_area;
@@ -417,14 +421,21 @@ pub fn render_agent(
             Some(Source::Llm(model)) => model.clone(),
             _ => lang.pick("offline rules", "离线规则").to_string(),
         };
-        let title = match lang {
-            Lang::Zh => format!("推荐 {} 个 · {source} · ↑↓ 选择 · 回车跳转", items.len()),
-            Lang::En => format!("{} picks · {source} · ↑↓ select · Enter jump", items.len()),
+        let title = match (cards_focused, lang) {
+            (true, Lang::Zh) => format!("推荐 {} 个 · {source}", items.len()),
+            (true, Lang::En) => format!("{} picks · {source}", items.len()),
+            (false, Lang::Zh) => format!("推荐 {} 个 · {source} · Tab 进入卡片区", items.len()),
+            (false, Lang::En) => format!("{} picks · {source} · Tab to the cards", items.len()),
+        };
+        let title_style = if cards_focused {
+            theme::TITLE_STYLE
+        } else {
+            theme::SECTION_STYLE
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!("── {title} "),
-                theme::SECTION_STYLE,
+                title_style,
             ))),
             Rect::new(cards_area.x, cards_area.y, cards_area.width, 1),
         );
@@ -474,60 +485,155 @@ pub fn render_agent(
         ));
     let field = input_block.inner(input_area);
     frame.render_widget(input_block, input_area);
-    let prompt = Span::styled("› ", theme::TITLE_STYLE);
-    let available = (field.width as usize).saturating_sub(3);
-    let line = if app.agent.input.is_empty() {
+    const PROMPT: &str = "› ";
+    let prompt = Span::styled(PROMPT, theme::TITLE_STYLE);
+    let prompt_width = text_width(PROMPT) as u16;
+    let available = field.width.saturating_sub(prompt_width) as usize;
+    let (line, cursor_x) = if app.agent.input.is_empty() {
         let placeholder = if app.agent.input_masked() {
             lang.pick("Paste the key (hidden)", "粘贴 Key（输入会被隐藏）")
         } else if app.agent.wizard.is_some() || app.agent.setup.is_some() {
             lang.pick("Answer the question above", "回答上面的问题")
         } else if focused {
             lang.pick(
-                "Describe your research, or /help",
-                "描述你的研究方向，或输入 /help",
+                "Describe your research, or type / for commands",
+                "描述你的研究方向，或输入 / 查看命令",
             )
+        } else if cards_focused {
+            lang.pick("Press i to type", "按 i 回到输入")
         } else {
             lang.pick("Press a to ask the agent", "按 a 向 agent 提问")
         };
-        let mut spans = vec![prompt];
-        if focused {
-            spans.push(Span::styled("▏", theme::TITLE_STYLE));
-        }
-        spans.push(Span::styled(placeholder, theme::DIM));
-        Line::from(spans)
+        (
+            Line::from(vec![prompt, Span::styled(placeholder, theme::DIM)]),
+            0,
+        )
     } else {
-        // Show the end of long input, like a single-line text field. An API
-        // key is drawn as bullets only.
-        let masked;
-        let input: &str = if app.agent.input_masked() {
-            masked = "•".repeat(app.agent.input.chars().count());
-            &masked
-        } else {
-            &app.agent.input
-        };
-        let mut shown: Vec<char> = Vec::new();
-        let mut used = 0;
-        for c in input.chars().rev() {
-            let w = char_width(c);
-            if used + w > available {
-                break;
-            }
-            used += w;
-            shown.push(c);
-        }
-        let text: String = shown.into_iter().rev().collect();
-        Line::from(vec![
-            prompt,
-            Span::styled(text, theme::SEARCH_STYLE),
-            Span::styled(if focused { "▏" } else { "" }, theme::TITLE_STYLE),
-        ])
+        // Scrolled so the cursor stays visible; an API key is drawn as
+        // bullets only.
+        let viewport = app
+            .agent
+            .input
+            .viewport(available, app.agent.input_masked());
+        (
+            Line::from(vec![
+                prompt,
+                Span::styled(viewport.text, theme::SEARCH_STYLE),
+            ]),
+            viewport.cursor_x,
+        )
     };
     frame.render_widget(Paragraph::new(line), field);
+    if focused && field.height > 0 {
+        // The real terminal cursor, so input methods (Chinese IME) place
+        // their candidate window at the insertion point.
+        let x = (field.x + prompt_width + cursor_x).min(field.right().saturating_sub(1));
+        frame.set_cursor_position(Position::new(x, field.y));
+    }
+
+    if focused {
+        render_completions(frame, app, view, inner, input_area, lang);
+    }
+}
+
+/// First-screen shortcuts, triggered with 1-4 or a click.
+fn render_quick_actions(
+    frame: &mut Frame,
+    app: &App,
+    view: &mut ViewState,
+    area: Rect,
+    lang: Lang,
+) {
+    if area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            lang.pick("── Shortcuts (press a number)", "── 快捷入口（按数字键）"),
+            theme::SECTION_STYLE,
+        ))),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    for (index, action) in QuickAction::ALL
+        .iter()
+        .enumerate()
+        .take(area.height.saturating_sub(1) as usize)
+    {
+        let row = Rect::new(area.x, area.y + 1 + index as u16, area.width, 1);
+        let hint = action.hint(app);
+        let mut spans = vec![
+            Span::styled(format!("  {} ", index + 1), theme::TITLE_STYLE),
+            Span::styled(action.label(app), Style::new().fg(theme::TEXT)),
+        ];
+        if !hint.is_empty() {
+            spans.push(Span::styled(format!("  {hint}"), theme::DIM));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), row);
+        view.layout.agent_quick.push((row, index));
+    }
+}
+
+/// The `/command` popup, drawn just above the input over the transcript.
+fn render_completions(
+    frame: &mut Frame,
+    app: &App,
+    view: &mut ViewState,
+    panel: Rect,
+    input_area: Rect,
+    lang: Lang,
+) {
+    let matches = app.agent.completions();
+    if matches.is_empty() {
+        return;
+    }
+    const MAX_ROWS: usize = 8;
+    let selected = app.agent.completion_cursor.min(matches.len() - 1);
+    let rows = matches.len().min(MAX_ROWS);
+    let height = (rows as u16).min(input_area.y.saturating_sub(panel.y));
+    if height == 0 {
+        return;
+    }
+    // Keep the selection visible when there are more matches than rows.
+    let offset = (selected + 1).saturating_sub(height as usize);
+    let area = Rect::new(panel.x, input_area.y - height, panel.width, height);
+    frame.render_widget(Clear, area);
+    let usage_width = matches
+        .iter()
+        .map(|c| text_width(&c.usage()))
+        .max()
+        .unwrap_or(0)
+        .min(panel.width as usize / 2);
+    for (row, (index, command)) in matches
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height as usize)
+        .enumerate()
+    {
+        let row_area = Rect::new(area.x, area.y + row as u16, area.width, 1);
+        let style = if index == selected {
+            theme::SELECTED_STYLE
+        } else {
+            Style::new().bg(theme::SURFACE)
+        };
+        let usage = command.usage();
+        let pad = usage_width.saturating_sub(text_width(&usage));
+        let line = Line::from(vec![
+            Span::styled(format!(" {usage}{} ", " ".repeat(pad)), theme::TITLE_STYLE),
+            Span::styled(command.description(lang), Style::new().fg(theme::TEXT)),
+        ])
+        .style(style);
+        frame.render_widget(Paragraph::new(line).style(style), row_area);
+        view.layout.agent_completions.push((row_area, index));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::view::ViewState;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn wrap_respects_display_width() {
@@ -547,11 +653,11 @@ mod tests {
 
         let (mut app, _dir) = app_with(None);
         app.open_agent();
-        app.agent.input = "/setup".into();
+        app.agent.input.set("/setup");
         app.submit_agent_input();
-        app.agent.input = "1".into();
+        app.agent.input.set("1");
         app.submit_agent_input();
-        app.agent.input = "sk-visible-secret".into();
+        app.agent.input.set("sk-visible-secret");
         let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
         terminal
             .draw(|frame| crate::ui::render::draw(frame, &mut app, Utc::now()))
@@ -566,6 +672,184 @@ mod tests {
         assert!(!screen.contains("sk-visible"), "key leaked to the screen");
         assert!(screen.contains("•••••"));
         assert!(screen.contains("/setup 2/5"));
+    }
+
+    fn draw_app(app: &mut App, width: u16, height: u16) -> (Terminal<TestBackend>, ViewState) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut view = ViewState::new();
+        terminal
+            .draw(|frame| crate::ui::render::draw_with_view(frame, app, &mut view, Utc::now()))
+            .unwrap();
+        (terminal, view)
+    }
+
+    fn screen(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buffer = terminal.backend().buffer();
+        (0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn terminal_cursor_follows_the_insertion_point() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.input.set("会议ab");
+        let (mut terminal, view) = draw_app(&mut app, 140, 30);
+        let field = view.layout.agent_input;
+        // Block top border, then "› " (2 cells) and 会议ab (6 cells).
+        terminal
+            .backend_mut()
+            .assert_cursor_position((field.x + 2 + 6, field.y + 1));
+
+        app.agent.input.home();
+        app.agent.input.right();
+        let (mut terminal, _) = draw_app(&mut app, 140, 30);
+        terminal
+            .backend_mut()
+            .assert_cursor_position((field.x + 2 + 2, field.y + 1));
+    }
+
+    #[test]
+    fn slash_popup_lists_matching_commands_above_the_input() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.input.set("/");
+        app.agent.input_edited();
+        let (terminal, view) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        let rows = &view.layout.agent_completions;
+        assert_eq!(rows.len(), 8, "capped at eight rows");
+        assert!(
+            rows.iter()
+                .all(|(area, _)| area.bottom() <= view.layout.agent_input.y)
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("/recommend [note]")),
+            "{lines:?}"
+        );
+
+        app.agent.input.set("/exp");
+        app.agent.input_edited();
+        let (terminal, view) = draw_app(&mut app, 140, 30);
+        assert_eq!(view.layout.agent_completions.len(), 1);
+        let lines = screen(&terminal);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("/export [path]") && l.contains("Save recommendations")),
+            "{lines:?}"
+        );
+
+        // Once dismissed nothing is drawn.
+        app.agent.dismiss_completion();
+        let (_, view) = draw_app(&mut app, 140, 30);
+        assert!(view.layout.agent_completions.is_empty());
+    }
+
+    #[test]
+    fn long_input_scrolls_instead_of_overflowing() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        let long = format!("{}END", "x".repeat(300));
+        app.agent.input.set(&long);
+        let (terminal, view) = draw_app(&mut app, 140, 30);
+        let field_row = view.layout.agent_input.y + 1;
+        let lines = screen(&terminal);
+        assert!(
+            lines[field_row as usize].contains("xEND"),
+            "{:?}",
+            lines[field_row as usize]
+        );
+    }
+
+    #[test]
+    fn shortcuts_render_and_respond_to_clicks() {
+        use crate::ui::agent::tests::app_with;
+        use crate::ui::input::handle_mouse;
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        let (terminal, mut view) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert_eq!(view.layout.agent_quick.len(), 4);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("1 Recommend for my profile")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("Connect a model  /setup")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.last().unwrap().contains("Shortcut"),
+            "footer: {:?}",
+            lines.last()
+        );
+
+        let (area, _) = view.layout.agent_quick[2];
+        handle_mouse(
+            &mut app,
+            &mut view,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 3,
+                row: area.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(app.agent.wizard.is_some(), "clicking 3 starts /init");
+        let (_, view) = draw_app(&mut app, 140, 30);
+        assert!(view.layout.agent_quick.is_empty());
+    }
+
+    #[test]
+    fn card_focus_changes_the_header_and_footer() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.profile.horizon_days = 100_000;
+        app.agent.input.set("computer vision database");
+        app.submit_agent_input();
+        while app.agent.is_busy() {
+            app.poll_agent();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert!(
+            lines.iter().any(|l| l.contains("Tab to the cards")),
+            "{lines:?}"
+        );
+
+        app.focus = Focus::AgentCards;
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert!(!lines.iter().any(|l| l.contains("Tab to the cards")));
+        let footer = lines.last().unwrap();
+        assert!(
+            footer.contains("Show in table") && footer.contains("Details"),
+            "{footer}"
+        );
+        // The detail lines follow the `d` toggle.
+        assert!(lines.iter().any(|l| l.contains(" Due ")), "{lines:?}");
+        app.toggle_card_details();
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        assert!(!screen(&terminal).iter().any(|l| l.contains(" Due ")));
     }
 
     #[test]

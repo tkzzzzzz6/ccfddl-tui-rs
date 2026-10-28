@@ -837,7 +837,7 @@ mod tests {
     }
 
     fn say(app: &mut App, text: &str) {
-        app.agent.input = text.to_string();
+        app.agent.input.set(text);
         app.submit_agent_input();
         wait(app);
     }

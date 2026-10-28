@@ -50,6 +50,15 @@ pub enum Focus {
     Search,
     /// Text input of the agent panel.
     Agent,
+    /// Recommendation cards of the agent panel; keys mirror the table.
+    AgentCards,
+}
+
+impl Focus {
+    /// Either part of the agent panel.
+    pub fn in_agent(self) -> bool {
+        matches!(self, Self::Agent | Self::AgentCards)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
