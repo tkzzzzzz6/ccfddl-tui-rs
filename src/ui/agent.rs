@@ -159,6 +159,8 @@ pub struct AgentPanel {
     pub handle: Option<AgentHandle>,
     pub recommendations: Option<RecommendationSet>,
     pub card_cursor: usize,
+    /// Show the details of the selected card (`d` toggles).
+    pub card_details: bool,
     /// Transcript lines scrolled up from the bottom.
     pub scroll: usize,
     pub profile: Profile,
@@ -202,6 +204,7 @@ impl AgentPanel {
             handle: None,
             recommendations: None,
             card_cursor: 0,
+            card_details: true,
             scroll: 0,
             profile: Profile::default(),
             profile_path,
@@ -296,8 +299,8 @@ impl AgentPanel {
 
     fn welcome(&mut self, lang: Lang) {
         self.info(lang.pick(
-            "Tell me what you work on and when the paper will be ready, e.g. \"multimodal LLM, ready 2027-03-01\". Type /help for commands.",
-            "说说你的研究方向和论文完成时间，例如「多模态大模型，2027-03-01 写完」。输入 /help 查看命令。",
+            "Tell me what you work on and when the paper will be ready, e.g. \"multimodal LLM, ready 2027-03-01\", or pick a shortcut below.",
+            "说说你的研究方向和论文完成时间，例如「多模态大模型，2027-03-01 写完」，或选择下方的快捷入口。",
         ));
         match &self.llm {
             Some(config) => {
@@ -322,30 +325,24 @@ impl AgentPanel {
                     });
                 }
                 self.info(lang.pick(
-                    "Offline mode: rule-based recommendations. Type /setup to connect a model.",
-                    "离线模式：使用规则推荐。输入 /setup 即可配置模型。",
+                    "Offline mode: rule-based recommendations.",
+                    "离线模式：使用规则推荐。",
                 ));
                 let detected = providers::detect_env_keys(self.env.as_ref());
                 if let Some((preset, var)) = detected.first() {
                     let text = match lang {
                         Lang::Zh => format!(
-                            "检测到 {var}：输入 /setup 后连按回车即可启用 {}。",
+                            "检测到 {var}：选择快捷入口 4 并连按回车即可启用 {}。",
                             preset.name_zh
                         ),
                         Lang::En => format!(
-                            "Found {var}: type /setup and press Enter through the defaults to use {}.",
+                            "Found {var}: shortcut 4, then Enter through the defaults, enables {}.",
                             preset.name
                         ),
                     };
                     self.info(text);
                 }
             }
-        }
-        if self.profile.is_empty() {
-            self.info(lang.pick(
-                "No research profile yet: /init sets one up in a few questions.",
-                "还没有研究画像：输入 /init 回答几个问题即可创建。",
-            ));
         }
     }
 }
@@ -372,6 +369,31 @@ impl App {
         self.focus = Focus::Table;
     }
 
+    pub fn has_cards(&self) -> bool {
+        self.agent
+            .recommendations
+            .as_ref()
+            .is_some_and(|set| !set.items.is_empty())
+    }
+
+    /// Tab from the input: the cards when there are any, else the table.
+    pub fn focus_next_from_input(&mut self) {
+        self.focus = if self.has_cards() {
+            Focus::AgentCards
+        } else {
+            Focus::Table
+        };
+    }
+
+    pub fn focus_agent_input(&mut self) {
+        self.agent.open = true;
+        self.focus = Focus::Agent;
+    }
+
+    pub fn toggle_card_details(&mut self) {
+        self.agent.card_details = !self.agent.card_details;
+    }
+
     /// Enter in the agent input.
     pub fn submit_agent_input(&mut self) {
         let text = self.agent.input.take().trim().to_string();
@@ -389,7 +411,6 @@ impl App {
             return;
         }
         if text.is_empty() {
-            self.jump_to_card();
             return;
         }
         if let Some(command) = text.strip_prefix('/') {
@@ -514,12 +535,6 @@ impl App {
                     set.summary.clone()
                 };
                 panel.entries.push(Entry::Assistant(summary));
-                panel.entries.push(Entry::Info(lang
-                    .pick(
-                        "↑↓ choose a card · Enter on empty input jumps to it in the table · Ctrl+F favorite · Ctrl+O open link · /export saves Markdown",
-                        "↑↓ 选择卡片 · 输入为空时回车跳到表格 · Ctrl+F 收藏 · Ctrl+O 打开官网 · /export 导出 Markdown",
-                    )
-                    .to_string()));
                 panel.recommendations = Some(set);
                 panel.card_cursor = 0;
             }
@@ -843,8 +858,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nKeys: Enter send · ↑↓ input history · Tab complete a /command (or go to the table) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · Alt+↑↓ cards · PgUp/PgDn scroll · Ctrl+F favorite · Ctrl+O open link · Esc stop/close",
-        "\n按键：Enter 发送 · ↑↓ 输入历史 · Tab 补全命令（否则回到表格）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · Alt+↑↓ 选卡片 · PgUp/PgDn 滚动 · Ctrl+F 收藏 · Ctrl+O 打开官网 · Esc 中断/关闭",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · i or Esc back to input · Tab table",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · i 或 Esc 回到输入 · Tab 表格",
     ));
     text
 }
@@ -945,8 +960,12 @@ pub(crate) mod tests {
         // Hide CVPR with a filter, then jump: filters reset and the row is
         // selected.
         app.toggle_category("AI");
+        // An empty Enter in the input no longer jumps.
         app.focus = Focus::Agent;
         type_and_enter(&mut app, "");
+        assert_eq!(app.focus, Focus::Agent);
+        app.focus = Focus::AgentCards;
+        app.jump_to_card();
         assert_eq!(app.focus, Focus::Table);
         assert_eq!(app.selected_row().unwrap().title, "CVPR");
         assert!(app.is_category_enabled("AI"));

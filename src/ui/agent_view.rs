@@ -16,6 +16,7 @@ use crate::agent::{Lang, topics};
 use crate::format::get_countdown_color;
 
 use super::agent::Entry;
+use super::agent_quick::QuickAction;
 use super::app::{App, Focus};
 use super::line_input::{char_width, text_width};
 use super::theme;
@@ -190,6 +191,8 @@ fn card_lines(
     app: &App,
     item: &Recommendation,
     selected: bool,
+    expanded: bool,
+    highlighted: bool,
     width: usize,
     now: DateTime<Utc>,
 ) -> Vec<Line<'static>> {
@@ -228,7 +231,7 @@ fn card_lines(
         Span::styled(countdown, countdown_style),
         favorite,
     ];
-    if selected {
+    if selected && highlighted {
         header = header
             .into_iter()
             .map(|span| {
@@ -238,7 +241,7 @@ fn card_lines(
             .collect();
     }
     let mut lines = vec![Line::from(header)];
-    if !selected {
+    if !expanded {
         return lines;
     }
 
@@ -318,6 +321,8 @@ pub fn render_agent(
     let lang: Lang = app.language.into();
     view.layout.agent = Some(area);
     let focused = app.focus == Focus::Agent;
+    let cards_focused = app.focus == Focus::AgentCards;
+    let panel_focused = focused || cards_focused;
     let status = if app.agent.is_busy() {
         lang.pick(" working ", " 运行中 ")
     } else {
@@ -326,7 +331,7 @@ pub fn render_agent(
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if focused {
+        .border_style(if panel_focused {
             Style::new().fg(theme::PRIMARY)
         } else {
             theme::DIM
@@ -354,7 +359,8 @@ pub fn render_agent(
     let mut cards: Vec<(usize, Line<'static>)> = Vec::new();
     for (index, item) in items.iter().enumerate() {
         let selected = index == app.agent.card_cursor;
-        for line in card_lines(app, item, selected, width, now) {
+        let expanded = selected && app.agent.card_details;
+        for line in card_lines(app, item, selected, expanded, cards_focused, width, now) {
             cards.push((index, line));
         }
     }
@@ -365,12 +371,22 @@ pub fn render_agent(
             .min(inner.height.saturating_sub(4) * 3 / 5)
             .max(3)
     };
-    let [transcript_area, cards_area, input_area] = Layout::vertical([
+    let quick = app.quick_actions_visible();
+    let quick_height = if quick {
+        (QuickAction::ALL.len() as u16 + 1).min(inner.height.saturating_sub(4))
+    } else {
+        0
+    };
+    let [transcript_area, quick_area, cards_area, input_area] = Layout::vertical([
         Constraint::Min(1),
+        Constraint::Length(quick_height),
         Constraint::Length(cards_height),
         Constraint::Length(2),
     ])
     .areas(inner);
+    if quick_height > 0 {
+        render_quick_actions(frame, app, view, quick_area, lang);
+    }
     view.layout.agent_transcript = transcript_area;
     view.layout.agent_cards_area = cards_area;
     view.layout.agent_input = input_area;
@@ -405,14 +421,21 @@ pub fn render_agent(
             Some(Source::Llm(model)) => model.clone(),
             _ => lang.pick("offline rules", "离线规则").to_string(),
         };
-        let title = match lang {
-            Lang::Zh => format!("推荐 {} 个 · {source} · ↑↓ 选择 · 回车跳转", items.len()),
-            Lang::En => format!("{} picks · {source} · ↑↓ select · Enter jump", items.len()),
+        let title = match (cards_focused, lang) {
+            (true, Lang::Zh) => format!("推荐 {} 个 · {source}", items.len()),
+            (true, Lang::En) => format!("{} picks · {source}", items.len()),
+            (false, Lang::Zh) => format!("推荐 {} 个 · {source} · Tab 进入卡片区", items.len()),
+            (false, Lang::En) => format!("{} picks · {source} · Tab to the cards", items.len()),
+        };
+        let title_style = if cards_focused {
+            theme::TITLE_STYLE
+        } else {
+            theme::SECTION_STYLE
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 format!("── {title} "),
-                theme::SECTION_STYLE,
+                title_style,
             ))),
             Rect::new(cards_area.x, cards_area.y, cards_area.width, 1),
         );
@@ -476,6 +499,8 @@ pub fn render_agent(
                 "Describe your research, or type / for commands",
                 "描述你的研究方向，或输入 / 查看命令",
             )
+        } else if cards_focused {
+            lang.pick("Press i to type", "按 i 回到输入")
         } else {
             lang.pick("Press a to ask the agent", "按 a 向 agent 提问")
         };
@@ -508,6 +533,43 @@ pub fn render_agent(
 
     if focused {
         render_completions(frame, app, view, inner, input_area, lang);
+    }
+}
+
+/// First-screen shortcuts, triggered with 1-4 or a click.
+fn render_quick_actions(
+    frame: &mut Frame,
+    app: &App,
+    view: &mut ViewState,
+    area: Rect,
+    lang: Lang,
+) {
+    if area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            lang.pick("── Shortcuts (press a number)", "── 快捷入口（按数字键）"),
+            theme::SECTION_STYLE,
+        ))),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+    for (index, action) in QuickAction::ALL
+        .iter()
+        .enumerate()
+        .take(area.height.saturating_sub(1) as usize)
+    {
+        let row = Rect::new(area.x, area.y + 1 + index as u16, area.width, 1);
+        let hint = action.hint(app);
+        let mut spans = vec![
+            Span::styled(format!("  {} ", index + 1), theme::TITLE_STYLE),
+            Span::styled(action.label(app), Style::new().fg(theme::TEXT)),
+        ];
+        if !hint.is_empty() {
+            spans.push(Span::styled(format!("  {hint}"), theme::DIM));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), row);
+        view.layout.agent_quick.push((row, index));
     }
 }
 
@@ -709,6 +771,85 @@ mod tests {
             "{:?}",
             lines[field_row as usize]
         );
+    }
+
+    #[test]
+    fn shortcuts_render_and_respond_to_clicks() {
+        use crate::ui::agent::tests::app_with;
+        use crate::ui::input::handle_mouse;
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        let (terminal, mut view) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert_eq!(view.layout.agent_quick.len(), 4);
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("1 Recommend for my profile")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.iter().any(|l| l.contains("Connect a model  /setup")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.last().unwrap().contains("Shortcut"),
+            "footer: {:?}",
+            lines.last()
+        );
+
+        let (area, _) = view.layout.agent_quick[2];
+        handle_mouse(
+            &mut app,
+            &mut view,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x + 3,
+                row: area.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(app.agent.wizard.is_some(), "clicking 3 starts /init");
+        let (_, view) = draw_app(&mut app, 140, 30);
+        assert!(view.layout.agent_quick.is_empty());
+    }
+
+    #[test]
+    fn card_focus_changes_the_header_and_footer() {
+        use crate::ui::agent::tests::app_with;
+
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.profile.horizon_days = 100_000;
+        app.agent.input.set("computer vision database");
+        app.submit_agent_input();
+        while app.agent.is_busy() {
+            app.poll_agent();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert!(
+            lines.iter().any(|l| l.contains("Tab to the cards")),
+            "{lines:?}"
+        );
+
+        app.focus = Focus::AgentCards;
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        let lines = screen(&terminal);
+        assert!(!lines.iter().any(|l| l.contains("Tab to the cards")));
+        let footer = lines.last().unwrap();
+        assert!(
+            footer.contains("Show in table") && footer.contains("Details"),
+            "{footer}"
+        );
+        // The detail lines follow the `d` toggle.
+        assert!(lines.iter().any(|l| l.contains(" Due ")), "{lines:?}");
+        app.toggle_card_details();
+        let (terminal, _) = draw_app(&mut app, 140, 30);
+        assert!(!screen(&terminal).iter().any(|l| l.contains(" Due ")));
     }
 
     #[test]

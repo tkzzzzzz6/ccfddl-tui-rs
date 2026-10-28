@@ -278,7 +278,15 @@ risks such as abstract deadlines are always kept.
 ### Agent panel
 
 Press `a` in the table or sidebar. The panel opens beside the table on wide
-terminals (≥ 120 columns) and replaces it on narrow ones while focused.
+terminals (≥ 120 columns) and replaces it on narrow ones while focused. It has
+two parts: the **input** at the bottom and the **recommendation cards** above
+it. `Tab` moves input → cards → table; `Shift+Tab` goes back.
+
+Before the first request the panel offers four shortcuts, run with `1`–`4` or a
+click: recommend for your profile, CCF-A deadlines in the next 30 days (works
+offline), set up the research profile, and connect or switch the model.
+
+**Input**
 
 | Key | Action |
 |-----|--------|
@@ -289,14 +297,26 @@ terminals (≥ 120 columns) and replaces it on narrow ones while focused.
 | `Ctrl+W` / `Ctrl+U` / `Ctrl+K` | Delete the previous word / to the start / to the end |
 | `↑` / `↓` | Previous / next sent input; restores your unsent draft |
 | `/` | Show matching commands; `↑` / `↓` choose, `Tab` completes, `Esc` closes the list |
-| `Enter` | Send; on an empty input, show the selected card in the table |
-| `Alt+↑` / `Alt+↓` | Select a recommendation card |
-| `Ctrl+F` | Toggle favourite of the selected card |
-| `Ctrl+O` | Open the selected conference's website |
+| `Enter` | Send |
+| `1`–`4` | Run a shortcut (first screen, empty input) |
 | `Ctrl+L` | Toggle language |
 | `PgUp` / `PgDn` | Scroll the transcript |
-| `Esc` | Stop a running request, leave `/init`, clear the input, then close |
-| `Tab` | Back to the table (the panel stays open) |
+| `Tab` | To the cards (or the table when there are none) |
+| `Esc` | Stop a running request, leave `/setup` or `/init`, clear the input, then close |
+
+**Cards** — the same keys as the conference table
+
+| Key | Action |
+|-----|--------|
+| `j` / `k`, `↑` / `↓` | Previous / next card |
+| `g` / `G` | First / last card |
+| `Enter` | Show the conference in the table (filters are reset if they hide it) |
+| `f` | Toggle favourite |
+| `o` | Open the conference website |
+| `d` | Show / hide the details of the selected card |
+| `i`, `Esc`, `Shift+Tab` | Back to the input (`/` also starts a command) |
+| `Tab` | To the table |
+| `q` | Quit |
 
 The terminal cursor sits at the insertion point, so input methods such as
 Chinese IMEs show their candidate window next to the text. Pasted text is
@@ -309,8 +329,9 @@ profile), `/profile`, `/export [path]` (Markdown, default
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),
 `/model set <number|name>` (switch and save), `/config` (effective settings and
-where each value comes from), `/lang`, `/clear`, `/help`. Clicking a card selects it, a second click shows it in the table, and
-the mouse wheel scrolls the transcript or moves through cards.
+where each value comes from), `/lang`, `/clear`, `/help`. Clicking a card selects it and focuses the cards, a second click shows it in
+the table; clicking a shortcut or a completion runs it, and the mouse wheel
+scrolls the transcript or moves through cards.
 
 ## Intentional differences from the Python app
 

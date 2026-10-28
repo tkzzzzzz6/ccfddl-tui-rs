@@ -210,7 +210,7 @@ fn render_body(
         let [left, right] =
             Layout::horizontal([Constraint::Min(60), Constraint::Length(panel_width)]).areas(main);
         (left, Some(right))
-    } else if app.focus == Focus::Agent {
+    } else if app.focus.in_agent() {
         (Rect::default(), Some(main))
     } else {
         (main, None)
@@ -781,20 +781,39 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("?", tr(language, "Help", "帮助")),
             ("q", tr(language, "Quit", "退出")),
         ],
+        Focus::AgentCards => vec![
+            ("j/k", tr(language, "Move", "移动")),
+            ("⏎", tr(language, "Show in table", "跳到表格")),
+            ("f", tr(language, "Favorite", "收藏")),
+            ("o", tr(language, "Open", "官网")),
+            ("d", tr(language, "Details", "详情")),
+            ("i", tr(language, "Input", "输入")),
+            ("Tab", tr(language, "Table", "表格")),
+            ("q", tr(language, "Quit", "退出")),
+        ],
         Focus::Agent if app.agent.completion_visible() => vec![
             ("↑↓", tr(language, "Choose", "选择")),
             ("Tab", tr(language, "Complete", "补全")),
             ("⏎", tr(language, "Send", "发送")),
             ("Esc", tr(language, "Close list", "关闭列表")),
         ],
+        Focus::Agent if app.agent.setup.is_some() || app.agent.wizard.is_some() => vec![
+            ("⏎", tr(language, "Answer", "回答")),
+            ("Esc", tr(language, "Cancel", "取消")),
+        ],
+        Focus::Agent if app.quick_actions_visible() => vec![
+            ("1-4", tr(language, "Shortcut", "快捷入口")),
+            ("⏎", tr(language, "Send", "发送")),
+            ("/", tr(language, "Commands", "命令")),
+            ("Tab", tr(language, "Table", "表格")),
+            ("Esc", tr(language, "Close", "关闭")),
+        ],
         Focus::Agent => vec![
             ("⏎", tr(language, "Send", "发送")),
             ("↑↓", tr(language, "History", "历史")),
-            ("Alt+↑↓", tr(language, "Cards", "选卡片")),
-            ("^F", tr(language, "Favorite", "收藏")),
-            ("^O", tr(language, "Open", "官网")),
             ("/", tr(language, "Commands", "命令")),
-            ("Tab", tr(language, "Table", "表格")),
+            ("Tab", tr(language, "Cards / table", "卡片/表格")),
+            ("PgUp/PgDn", tr(language, "Scroll", "滚动")),
             ("Esc", tr(language, "Stop/Close", "中断/关闭")),
         ],
         Focus::Table => vec![
