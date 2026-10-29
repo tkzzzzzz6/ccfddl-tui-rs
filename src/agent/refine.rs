@@ -81,14 +81,14 @@ const RESEARCH: [&str; 9] = [
 
 /// Regions: Chinese name, English name, aliases, keywords of the data's
 /// `place` field.
-type Region = (
+pub type Region = (
     &'static str,
     &'static str,
     &'static [&'static str],
     &'static [&'static str],
 );
 
-const PLACES: [Region; 6] = [
+const PLACES: [Region; 10] = [
     (
         "国内",
         "China",
@@ -149,7 +149,31 @@ const PLACES: [Region; 6] = [
     ),
     ("日本", "Japan", &["日本", "japan"], &["Japan"]),
     ("加拿大", "Canada", &["加拿大", "canada"], &["Canada"]),
+    (
+        "北美",
+        "North America",
+        &["北美", "north america"],
+        &["USA", "United States", "U.S.A", "Canada", "Mexico"],
+    ),
+    (
+        "新加坡",
+        "Singapore",
+        &["新加坡", "singapore"],
+        &["Singapore"],
+    ),
+    ("韩国", "Korea", &["韩国", "korea"], &["Korea"]),
+    (
+        "澳新",
+        "Australia / NZ",
+        &["澳洲", "澳大利亚", "新西兰", "australia", "new zealand"],
+        &["Australia", "New Zealand"],
+    ),
 ];
+
+/// Known regions, for the profile form's place choices.
+pub fn regions() -> &'static [Region] {
+    &PLACES
+}
 
 /// Category aliases (codes are matched as whole words separately).
 const CATEGORY_ALIASES: [(&str, &[&str]); 10] = [

@@ -129,6 +129,10 @@ fn search_key(app: &mut App, key: KeyEvent) -> Outcome {
 /// Up/Down browse the input history (or the `/command` popup); Tab moves on
 /// to the cards. Number keys run the first-screen shortcuts.
 fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
+    if app.agent.form.is_some() {
+        app.profile_form_key(key);
+        return Outcome::Continue;
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let popup = app.agent.completion_visible();
     match key.code {
@@ -209,10 +213,13 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
 /// A bracketed paste: inserted at the cursor, never submitted.
 pub fn handle_paste(app: &mut App, text: &str) -> Outcome {
     match app.focus {
-        Focus::Agent => {
-            app.agent.input.insert_str(text);
-            app.agent.input_edited();
-        }
+        Focus::Agent => match app.agent.form.as_mut() {
+            Some(form) => form.paste(text),
+            None => {
+                app.agent.input.insert_str(text);
+                app.agent.input_edited();
+            }
+        },
         Focus::Search => {
             let line: String = text
                 .chars()
@@ -306,6 +313,19 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
             origin_x: point.x,
             width: panel.width,
         });
+        return Outcome::Continue;
+    }
+    if let Some(&(_, field, option)) = view
+        .layout
+        .agent_form
+        .iter()
+        .find(|(area, _, _)| area.contains(point))
+    {
+        app.click_profile_form(field, option);
+        return Outcome::Continue;
+    }
+    if app.agent.form.is_some() && view.layout.agent.is_some_and(|a| a.contains(point)) {
+        app.focus = Focus::Agent;
         return Outcome::Continue;
     }
     if let Some(&(_, index)) = view
@@ -888,12 +908,12 @@ mod tests {
         type_text(&mut app, "/help");
         press(&mut app, KeyCode::Esc); // close the popup
         press(&mut app, KeyCode::Enter);
-        type_text(&mut app, "/profile");
+        type_text(&mut app, "/config");
         press(&mut app, KeyCode::Esc);
         press(&mut app, KeyCode::Enter);
         type_text(&mut app, "draft");
         press(&mut app, KeyCode::Up);
-        assert_eq!(app.agent.input, "/profile");
+        assert_eq!(app.agent.input, "/config");
         press(&mut app, KeyCode::Up);
         assert_eq!(app.agent.input, "/help");
         press(&mut app, KeyCode::Down);
@@ -1108,13 +1128,13 @@ mod tests {
         press(&mut app, KeyCode::Char('a'));
         assert!(app.quick_actions_visible());
         press(&mut app, KeyCode::Char('3'));
-        assert!(app.agent.wizard.is_some(), "3 starts /init");
+        assert!(app.agent.form.is_some(), "3 opens the profile form");
 
         let mut fresh = self::app();
         press(&mut fresh, KeyCode::Char('a'));
         type_text(&mut fresh, "top 3");
         assert_eq!(fresh.agent.input, "top 3");
-        assert!(fresh.agent.wizard.is_none());
+        assert!(fresh.agent.form.is_none());
     }
 
     #[test]

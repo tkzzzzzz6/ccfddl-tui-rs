@@ -39,14 +39,14 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "init",
         args: "",
-        en: "Set up the research profile",
-        zh: "问答式设置研究画像",
+        en: "Set up the research profile (form)",
+        zh: "设置研究画像（表单）",
     },
     SlashCommand {
         name: "profile",
         args: "",
-        en: "Show the profile",
-        zh: "查看当前画像",
+        en: "View and edit the profile",
+        zh: "查看并编辑画像",
     },
     SlashCommand {
         name: "export",
@@ -173,7 +173,7 @@ impl AgentPanel {
         if self.completion_dismissed
             || self.history_index.is_some()
             || self.setup.is_some()
-            || self.wizard.is_some()
+            || self.form.is_some()
         {
             return Vec::new();
         }

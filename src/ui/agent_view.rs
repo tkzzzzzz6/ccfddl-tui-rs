@@ -372,6 +372,10 @@ pub fn render_agent(
         return;
     }
     let width = inner.width as usize;
+    if app.agent.form.is_some() {
+        super::profile_form_view::render_form(frame, app, view, inner);
+        return;
+    }
 
     // Cards first, so the transcript gets whatever is left.
     let items = app
@@ -533,10 +537,9 @@ pub fn render_agent(
             theme::BORDER_STYLE
         })
         .title(Span::styled(
-            match (&app.agent.setup, &app.agent.wizard) {
-                (Some(setup), _) => setup.title(),
-                (None, Some(wizard)) => format!(" /init {}/5 ", wizard.step.index() + 1),
-                (None, None) => String::new(),
+            match &app.agent.setup {
+                Some(setup) => setup.title(),
+                None => String::new(),
             },
             theme::TITLE_STYLE,
         ));
@@ -549,7 +552,7 @@ pub fn render_agent(
     let (line, cursor_x) = if app.agent.input.is_empty() {
         let placeholder = if app.agent.input_masked() {
             lang.pick("Paste the key (hidden)", "粘贴 Key（输入会被隐藏）")
-        } else if app.agent.wizard.is_some() || app.agent.setup.is_some() {
+        } else if app.agent.setup.is_some() {
             lang.pick("Answer the question above", "回答上面的问题")
         } else if focused {
             lang.pick(
@@ -868,7 +871,10 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             },
         );
-        assert!(app.agent.wizard.is_some(), "clicking 3 starts /init");
+        assert!(
+            app.agent.form.is_some(),
+            "clicking 3 opens the profile form"
+        );
         let (_, view) = draw_app(&mut app, 140, 30);
         assert!(view.layout.agent_quick.is_empty());
     }

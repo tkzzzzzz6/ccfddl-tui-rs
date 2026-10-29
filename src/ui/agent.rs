@@ -13,7 +13,7 @@ use std::sync::mpsc::Receiver;
 
 use crate::agent::config::Overrides;
 use crate::agent::llm::{ChatMessage, LlmClient, LlmConfig, LlmError, OpenAiClient, list_models};
-use crate::agent::profile::{Profile, normalize_ranks, parse_date, split_list};
+use crate::agent::profile::Profile;
 use crate::agent::providers;
 use crate::agent::recommend::RecommendationSet;
 use crate::agent::refine::Constraints;
@@ -31,6 +31,7 @@ use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
 use super::line_input::LineInput;
+use super::profile_form::ProfileForm;
 
 impl From<Language> for Lang {
     fn from(language: Language) -> Self {
@@ -55,89 +56,6 @@ pub enum Entry {
     },
     Info(String),
     Error(String),
-}
-
-/// Steps of the `/init` questionnaire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WizardStep {
-    Interests,
-    TargetRanks,
-    ReadyDate,
-    PreferredPlaces,
-    AvoidedPlaces,
-}
-
-impl WizardStep {
-    pub const ALL: [WizardStep; 5] = [
-        Self::Interests,
-        Self::TargetRanks,
-        Self::ReadyDate,
-        Self::PreferredPlaces,
-        Self::AvoidedPlaces,
-    ];
-
-    pub fn index(self) -> usize {
-        Self::ALL.iter().position(|s| *s == self).unwrap_or(0)
-    }
-
-    fn next(self) -> Option<Self> {
-        Self::ALL.get(self.index() + 1).copied()
-    }
-
-    fn question(self, lang: Lang, profile: &Profile) -> String {
-        let current = |items: &[String]| {
-            if items.is_empty() {
-                lang.pick("none", "无").to_string()
-            } else {
-                items.join(", ")
-            }
-        };
-        let (en, zh, value) = match self {
-            Self::Interests => (
-                "Research interests, comma separated (e.g. multimodal LLM, program analysis)",
-                "研究方向，用逗号分隔（如：多模态大模型, 程序分析）",
-                current(&profile.interests),
-            ),
-            Self::TargetRanks => (
-                "Target CCF ranks (e.g. A,B)",
-                "目标 CCF 等级（如：A,B）",
-                current(&profile.target_ranks),
-            ),
-            Self::ReadyDate => (
-                "When will the paper be ready? YYYY-MM-DD",
-                "论文预计何时完成？格式 YYYY-MM-DD",
-                profile
-                    .ready_date
-                    .map(|d| d.to_string())
-                    .unwrap_or_else(|| lang.pick("none", "无").to_string()),
-            ),
-            Self::PreferredPlaces => (
-                "Preferred places (e.g. Asia, China)",
-                "偏好的举办地（如：China, Singapore）",
-                current(&profile.preferred_places),
-            ),
-            Self::AvoidedPlaces => (
-                "Places to avoid",
-                "希望避开的举办地",
-                current(&profile.avoided_places),
-            ),
-        };
-        format!(
-            "[{}/{}] {}  ({}: {}; {})",
-            self.index() + 1,
-            Self::ALL.len(),
-            lang.pick(en, zh),
-            lang.pick("current", "当前"),
-            value,
-            lang.pick("Enter keeps it, - clears", "回车保留，输入 - 清空"),
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Wizard {
-    pub step: WizardStep,
-    pub draft: Profile,
 }
 
 pub type ClientFactory = Box<dyn Fn(&LlmConfig) -> Box<dyn LlmClient>>;
@@ -193,7 +111,10 @@ pub struct AgentPanel {
     profile_loaded: bool,
     pub llm: Option<LlmConfig>,
     pub client_factory: ClientFactory,
-    pub wizard: Option<Wizard>,
+    /// The research-profile form (`/init`, `/profile`, `p`).
+    pub form: Option<ProfileForm>,
+    /// Cached preview of the form's draft.
+    pub form_preview: Option<(Profile, super::agent_profile::Preview)>,
     /// `/setup` questionnaire for the model connection.
     pub setup: Option<SetupWizard>,
     /// Background model-list or connection-test request.
@@ -249,7 +170,8 @@ impl AgentPanel {
             profile_loaded: false,
             llm,
             client_factory: Box::new(|config| Box::new(OpenAiClient::new(config.clone()))),
-            wizard: None,
+            form: None,
+            form_preview: None,
             setup: None,
             setup_rx: None,
             last_models: Vec::new(),
@@ -509,16 +431,12 @@ impl App {
         let text = self.agent.input.take().trim().to_string();
         self.agent.input_edited();
         // Keys and questionnaire answers never enter the history.
-        if self.agent.setup.is_none() && self.agent.wizard.is_none() {
+        if self.agent.setup.is_none() {
             self.agent.record_history(&text);
             self.agent.save_session();
         }
         if self.agent.setup.is_some() {
             self.answer_setup(&text);
-            return;
-        }
-        if self.agent.wizard.is_some() {
-            self.answer_wizard(&text);
             return;
         }
         if text.is_empty() {
@@ -534,14 +452,12 @@ impl App {
     /// Esc in the agent input: interrupt, leave the questionnaire, clear the
     /// input, or close the panel, in that order.
     pub fn agent_escape(&mut self) {
-        let lang = self.lang();
         if let Some(handle) = &self.agent.handle {
             handle.cancel();
         } else if self.agent.setup.is_some() {
             self.cancel_setup();
-        } else if self.agent.wizard.take().is_some() {
-            self.agent
-                .info(lang.pick("Profile setup cancelled.", "已取消画像设置。"));
+        } else if self.agent.form.is_some() {
+            self.cancel_profile_form();
         } else if !self.agent.input.is_empty() {
             self.agent.input.clear();
         } else {
@@ -795,7 +711,10 @@ impl App {
         self.agent.entries.push(Entry::User(format!("/{command}")));
         match name.to_lowercase().as_str() {
             "help" | "h" | "?" => self.agent.info(command_help(lang)),
-            "init" => self.start_wizard(),
+            "init" => {
+                self.agent.entries.pop();
+                self.open_profile_form();
+            }
             "setup" => self.start_setup(),
             "config" => self.config_command(),
             "recommend" | "rec" => {
@@ -813,10 +732,8 @@ impl App {
                 self.start_agent_turn(&prompt);
             }
             "profile" => {
-                self.agent.ensure_profile(lang);
-                let summary = self.agent.profile.summary(lang.is_zh());
-                let path = self.agent.profile_path.display().to_string();
-                self.agent.info(format!("{summary}\n{path}"));
+                self.agent.entries.pop();
+                self.open_profile_form();
             }
             "model" => self.model_command(arg),
             "only" => {
@@ -905,101 +822,6 @@ impl App {
                 self.agent.info(text);
             }
             Err(error) => self.agent.error(format!("{error}")),
-        }
-    }
-
-    // --- /init questionnaire --------------------------------------------
-
-    pub fn start_wizard(&mut self) {
-        let lang = self.lang();
-        self.agent.ensure_profile(lang);
-        let draft = self.agent.profile.clone();
-        let question = WizardStep::Interests.question(lang, &draft);
-        self.agent.wizard = Some(Wizard {
-            step: WizardStep::Interests,
-            draft,
-        });
-        self.agent.info(lang.pick(
-            "Let's set up your research profile (Esc to cancel).",
-            "开始设置研究画像（按 Esc 取消）。",
-        ));
-        self.agent.info(question);
-    }
-
-    fn answer_wizard(&mut self, answer: &str) {
-        let lang = self.lang();
-        let Some(mut wizard) = self.agent.wizard.take() else {
-            return;
-        };
-        if !answer.is_empty() {
-            self.agent.entries.push(Entry::User(answer.to_string()));
-        }
-        let clear = answer == "-";
-        let draft = &mut wizard.draft;
-        let mut invalid = None;
-        match wizard.step {
-            WizardStep::Interests if clear => draft.interests.clear(),
-            WizardStep::Interests if !answer.is_empty() => draft.interests = split_list(answer),
-            WizardStep::TargetRanks if !answer.is_empty() && !clear => {
-                let ranks = normalize_ranks(&split_list(&answer.replace(' ', ",")));
-                if ranks.is_empty() {
-                    invalid = Some(lang.pick("Use A, B, C or N.", "请输入 A、B、C 或 N。"));
-                } else {
-                    draft.target_ranks = ranks;
-                }
-            }
-            WizardStep::ReadyDate if clear => draft.ready_date = None,
-            WizardStep::ReadyDate if !answer.is_empty() => match parse_date(answer) {
-                Some(date) => draft.ready_date = Some(date),
-                None => invalid = Some(lang.pick("Use YYYY-MM-DD.", "日期格式应为 YYYY-MM-DD。")),
-            },
-            WizardStep::PreferredPlaces if clear => draft.preferred_places.clear(),
-            WizardStep::PreferredPlaces if !answer.is_empty() => {
-                draft.preferred_places = split_list(answer)
-            }
-            WizardStep::AvoidedPlaces if clear => draft.avoided_places.clear(),
-            WizardStep::AvoidedPlaces if !answer.is_empty() => {
-                draft.avoided_places = split_list(answer)
-            }
-            _ => {}
-        }
-        if let Some(message) = invalid {
-            self.agent.error(message);
-            let question = wizard.step.question(lang, &wizard.draft);
-            self.agent.info(question);
-            self.agent.wizard = Some(wizard);
-            return;
-        }
-
-        match wizard.step.next() {
-            Some(step) => {
-                wizard.step = step;
-                let question = step.question(lang, &wizard.draft);
-                self.agent.info(question);
-                self.agent.wizard = Some(wizard);
-            }
-            None => {
-                let profile = wizard.draft;
-                match profile.save(&self.agent.profile_path) {
-                    Ok(()) => {
-                        let text = match lang {
-                            Lang::Zh => format!(
-                                "画像已保存到 {}：\n{}\n输入 /recommend 获取推荐。",
-                                self.agent.profile_path.display(),
-                                profile.summary(true)
-                            ),
-                            Lang::En => format!(
-                                "Profile saved to {}:\n{}\nType /recommend for suggestions.",
-                                self.agent.profile_path.display(),
-                                profile.summary(false)
-                            ),
-                        };
-                        self.agent.info(text);
-                    }
-                    Err(error) => self.agent.error(format!("{error}")),
-                }
-                self.agent.profile = profile;
-            }
         }
     }
 
@@ -1299,52 +1121,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn wizard_builds_and_saves_a_profile() {
-        let (mut app, dir) = app_with(None);
-        app.open_agent();
-        type_and_enter(&mut app, "/init");
-        assert!(app.agent.wizard.is_some());
-        type_and_enter(&mut app, "多模态, program analysis");
-        type_and_enter(&mut app, "x"); // invalid rank: asked again
-        assert_eq!(
-            app.agent.wizard.as_ref().unwrap().step,
-            WizardStep::TargetRanks
-        );
-        type_and_enter(&mut app, "a b");
-        type_and_enter(&mut app, "2099-01-31");
-        type_and_enter(&mut app, ""); // keep places
-        type_and_enter(&mut app, "-");
-        assert!(app.agent.wizard.is_none());
-
-        let saved = Profile::load(&dir.path().join("profile.yaml"))
-            .unwrap()
-            .unwrap();
-        assert_eq!(saved.interests, ["多模态", "program analysis"]);
-        assert_eq!(saved.target_ranks, ["A", "B"]);
-        assert_eq!(saved.ready_date, parse_date("2099-01-31"));
-        assert_eq!(app.agent.profile, saved);
-    }
-
-    #[test]
-    fn escape_cancels_the_wizard_first() {
-        let (mut app, _dir) = app_with(None);
-        app.open_agent();
-        type_and_enter(&mut app, "/init");
-        app.agent_escape();
-        assert!(app.agent.wizard.is_none());
-        assert!(app.agent.open);
-    }
-
-    #[test]
     fn commands_cover_help_profile_model_clear_and_export() {
         let (mut app, dir) = app_with(None);
         app.open_agent();
         type_and_enter(&mut app, "/help");
         assert!(matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("/export")));
         type_and_enter(&mut app, "/profile");
-        assert!(
-            matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("profile.yaml"))
-        );
+        assert!(app.agent.form.is_some(), "/profile opens the form");
+        app.agent_escape();
+        assert!(app.agent.form.is_none());
         type_and_enter(&mut app, "/model");
         assert!(matches!(app.agent.entries.last(), Some(Entry::Info(t)) if t.contains("/setup")));
         type_and_enter(&mut app, "/export");

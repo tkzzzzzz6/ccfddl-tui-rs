@@ -72,7 +72,7 @@ impl App {
         self.agent.open
             && self.agent.input.is_empty()
             && self.agent.setup.is_none()
-            && self.agent.wizard.is_none()
+            && self.agent.form.is_none()
             && !self.agent.is_busy()
             && !self
                 .agent

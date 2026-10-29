@@ -204,8 +204,37 @@ conference data; a model, when configured, only writes the explanations.
 
 ### Research profile
 
-The agent reads `~/.ccfddl/profile.yaml`. Create it with `/init` in the agent
-panel, or write a commented template with `--init-profile` and edit it:
+The agent reads `~/.ccfddl/profile.yaml`. Edit it in the agent panel with
+`/init` or `/profile` (shortcut 3 on the first screen), or write a commented
+template with `--init-profile` and edit the file.
+
+The profile form shows every field at once; nothing has to be answered in
+order:
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓`, `Tab` / `Shift+Tab`, `Enter` | Previous / next field (`Enter` on the last one saves) |
+| typing | Edit the interests or the ready date |
+| `←` / `→`, `Space` | Move between choices, tick / untick one |
+| `Ctrl+S` | Save |
+| `Esc` | Close without saving |
+| mouse | Click a field or a choice |
+
+- **Interests**: the topics recognised are shown under the field, with a
+  warning when none is.
+- **Ready date**: accepts `2027-03-01`, `2027/3/1`, `2027.3.1`, `2027年3月1日`,
+  `3月1日`, `3/1`, `3个月后`, `2周后`, `in 3 months` or `next month`, and shows
+  the weekday and the days left.
+- **Target ranks, CCF categories (or automatic), deadline horizon (3 months to
+  2 years), TBD deadlines**: chosen, not typed.
+- **Preferred / avoided places**: regions (China, Asia, Europe, North America,
+  Japan, Singapore, ...) that map to the place names used in the data; a place
+  covered by a ticked region is shown as `[·]`, and places typed into
+  `profile.yaml` are kept.
+- **Preview**: a line at the bottom counts the matching conferences and shows
+  the best pick of each tier, updated as you edit.
+
+The file keeps the same format:
 
 ```yaml
 interests: ["multimodal LLM", "程序分析"]   # English or Chinese
@@ -358,7 +387,7 @@ recommendations.
 | `PgUp` / `PgDn` | Scroll the transcript |
 | `Tab` | To the cards (or the table when there are none) |
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
-| `Esc` | Stop a running request, leave `/setup` or `/init`, clear the input, then close |
+| `Esc` | Stop a running request, leave `/setup` or the profile form, clear the input, then close |
 
 **Cards** — the same keys as the conference table
 
@@ -396,8 +425,7 @@ Chinese IMEs show their candidate window next to the text. Pasted text is
 inserted at the cursor and never sent by itself: line breaks become spaces
 (bracketed paste; the legacy Windows console does not support it).
 
-Slash commands: `/recommend [note]`, `/init` (five questions that save the
-profile), `/profile`, `/export [path]` (Markdown, default
+Slash commands: `/recommend [note]`, `/init` and `/profile` (the profile form), `/export [path]` (Markdown, default
 `~/.ccfddl/recommendations-<time>.md`; exports the round on screen), `/setup` (connect a model),
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),

@@ -955,7 +955,14 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("⏎", tr(language, "Send", "发送")),
             ("Esc", tr(language, "Close list", "关闭列表")),
         ],
-        Focus::Agent if app.agent.setup.is_some() || app.agent.wizard.is_some() => vec![
+        Focus::Agent if app.agent.form.is_some() => vec![
+            ("↑↓", tr(language, "Field", "字段")),
+            ("←→", tr(language, "Choose", "选择")),
+            ("Space", tr(language, "Toggle", "勾选")),
+            ("Ctrl+S", tr(language, "Save", "保存")),
+            ("Esc", tr(language, "Cancel", "取消")),
+        ],
+        Focus::Agent if app.agent.setup.is_some() => vec![
             ("⏎", tr(language, "Answer", "回答")),
             ("Esc", tr(language, "Cancel", "取消")),
         ],
