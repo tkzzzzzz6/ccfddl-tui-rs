@@ -130,9 +130,7 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
                     &mut lines,
                     Span::styled("› ", theme::TITLE_STYLE),
                     text,
-                    Style::new()
-                        .fg(ratatui::style::Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    theme::SEARCH_STYLE.add_modifier(Modifier::BOLD),
                     width,
                 );
             }
@@ -360,7 +358,7 @@ pub fn render_agent(
         .border_style(if panel_focused {
             Style::new().fg(theme::PRIMARY)
         } else {
-            theme::DIM
+            theme::BORDER_STYLE
         })
         .title(Span::styled(
             format!(" Agent · {} ", app.agent.model_label()),
@@ -532,7 +530,7 @@ pub fn render_agent(
         .border_style(if focused {
             Style::new().fg(theme::PRIMARY)
         } else {
-            theme::DIM
+            theme::BORDER_STYLE
         })
         .title(Span::styled(
             match (&app.agent.setup, &app.agent.wizard) {

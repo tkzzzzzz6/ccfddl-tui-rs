@@ -8,22 +8,33 @@ use ratatui::style::{Color, Modifier, Style};
 
 use crate::format::CountdownColor;
 
+// Colours are fixed RGB values rather than the terminal's 16-colour palette:
+// the backgrounds below are fixed too, and palette colours such as DarkGray
+// or Blue range from readable to invisible depending on the terminal. Every
+// text colour keeps a WCAG contrast of at least 4.5:1 on the panel
+// backgrounds (see the tests). `Modifier::DIM` is not used for text because
+// terminals render it inconsistently (some halve the brightness).
+
 /// Header/footer accent (`$accent`).
-pub const ACCENT: Color = Color::Cyan;
+pub const ACCENT: Color = Color::Rgb(0x56, 0xc8, 0xd8);
 /// Primary highlight (`$primary`).
-pub const PRIMARY: Color = Color::Blue;
-pub const ERROR: Color = Color::Red;
-pub const WARNING: Color = Color::Yellow;
-pub const SUCCESS: Color = Color::Green;
-/// Muted body text (`$text-muted`).
-pub const MUTED: Color = Color::DarkGray;
-pub const TEXT: Color = Color::Gray;
+pub const PRIMARY: Color = Color::Rgb(0x6e, 0xa8, 0xf5);
+pub const ERROR: Color = Color::Rgb(0xf2, 0x78, 0x78);
+pub const WARNING: Color = Color::Rgb(0xe8, 0xc5, 0x47);
+pub const SUCCESS: Color = Color::Rgb(0x6d, 0xcb, 0x7a);
+/// Secondary text (`$text-muted`).
+pub const MUTED: Color = Color::Rgb(0xa9, 0xb1, 0xbd);
+/// Hints, placeholders and de-emphasised rows; still readable.
+pub const HINT: Color = Color::Rgb(0x8f, 0x97, 0xa3);
+/// Unfocused borders, separators and scrollbar tracks (decoration only).
+pub const BORDER: Color = Color::Rgb(0x5c, 0x63, 0x6e);
+pub const TEXT: Color = Color::Rgb(0xd0, 0xd4, 0xda);
 
 pub const SURFACE: Color = Color::Rgb(31, 31, 31);
 pub const SURFACE_DARK: Color = Color::Rgb(24, 24, 24);
 pub const HEADER_BG: Color = Color::Rgb(25, 40, 60);
 pub const FOOTER_BG: Color = Color::Rgb(20, 20, 20);
-pub const SELECTED_BG: Color = Color::Rgb(45, 70, 105);
+pub const SELECTED_BG: Color = Color::Rgb(36, 54, 86);
 
 pub const BASE: Style = Style::new();
 pub const HEADER_STYLE: Style = Style::new().fg(TEXT).bg(HEADER_BG);
@@ -32,24 +43,27 @@ pub const SIDEBAR_STYLE: Style = Style::new().fg(TEXT).bg(SURFACE);
 pub const TITLE_STYLE: Style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
 pub const SECTION_STYLE: Style = Style::new().fg(MUTED).add_modifier(Modifier::BOLD);
 pub const SELECTED_STYLE: Style = Style::new().bg(SELECTED_BG).add_modifier(Modifier::BOLD);
-pub const DIM: Style = Style::new().fg(MUTED).add_modifier(Modifier::DIM);
+/// Secondary text: hints, finished conferences, placeholders.
+pub const DIM: Style = Style::new().fg(HINT);
+/// Unfocused borders and scrollbar tracks.
+pub const BORDER_STYLE: Style = Style::new().fg(BORDER);
 pub const BOLD: Style = Style::new().add_modifier(Modifier::BOLD);
-pub const SEARCH_STYLE: Style = Style::new().fg(Color::White);
-pub const PLACE_STYLE: Style = Style::new().fg(TEXT).add_modifier(Modifier::DIM);
+pub const SEARCH_STYLE: Style = Style::new().fg(Color::Rgb(0xf0, 0xf2, 0xf5));
+pub const PLACE_STYLE: Style = Style::new().fg(MUTED);
 
 /// Per-category accent colours, from the `.sub-*` rules in `styles.tcss`.
 pub fn sub_color(sub: &str) -> Color {
     match sub {
-        "DS" => Color::Rgb(0x5f, 0x87, 0xaf),
+        "DS" => Color::Rgb(0x65, 0x8c, 0xb2),
         "NW" => Color::Rgb(0x87, 0xaf, 0xaf),
-        "SC" => Color::Rgb(0xaf, 0x5f, 0x5f),
+        "SC" => Color::Rgb(0xba, 0x75, 0x75),
         "SE" => Color::Rgb(0xaf, 0x87, 0x5f),
         "DB" => Color::Rgb(0x5f, 0xaf, 0x87),
-        "CT" => Color::Rgb(0x87, 0x5f, 0x87),
-        "CG" => Color::Rgb(0xaf, 0x5f, 0xaf),
+        "CT" => Color::Rgb(0x9f, 0x7f, 0x9f),
+        "CG" => Color::Rgb(0xb7, 0x6f, 0xb7),
         "AI" => Color::Rgb(0x5f, 0xaf, 0xaf),
         "HI" => Color::Rgb(0xaf, 0x87, 0x87),
-        "MX" => Color::Rgb(0x87, 0x87, 0x5f),
+        "MX" => Color::Rgb(0x8c, 0x8c, 0x65),
         _ => TEXT,
     }
 }
@@ -136,6 +150,82 @@ mod tests {
             );
         }
         assert_eq!(sub_color("ZZ"), TEXT);
+    }
+
+    fn rgb(color: Color) -> (f64, f64, f64) {
+        match color {
+            Color::Rgb(r, g, b) => (r as f64, g as f64, b as f64),
+            other => panic!("{other:?} is not a fixed RGB colour"),
+        }
+    }
+
+    /// WCAG 2 contrast ratio.
+    fn contrast(a: Color, b: Color) -> f64 {
+        let luminance = |c: Color| {
+            let (r, g, b) = rgb(c);
+            let lin = |v: f64| {
+                let v = v / 255.0;
+                if v <= 0.03928 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+        };
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    const BACKGROUNDS: [Color; 4] = [SURFACE, SURFACE_DARK, HEADER_BG, FOOTER_BG];
+
+    #[test]
+    fn text_colours_are_readable_on_every_background() {
+        let base = [TEXT, MUTED, HINT, ACCENT, PRIMARY, ERROR, WARNING, SUCCESS];
+        for fg in base {
+            for bg in BACKGROUNDS {
+                let ratio = contrast(fg, bg);
+                assert!(ratio >= 4.5, "{fg:?} on {bg:?}: {ratio:.2}");
+            }
+        }
+        // Category colours only appear in the table and the sidebar.
+        let categories: Vec<Color> = crate::model::CATEGORIES
+            .iter()
+            .map(|c| sub_color(c.sub))
+            .collect();
+        for fg in &categories {
+            for bg in [SURFACE, SURFACE_DARK] {
+                let ratio = contrast(*fg, bg);
+                assert!(ratio >= 4.5, "{fg:?} on {bg:?}: {ratio:.2}");
+            }
+        }
+        let text: Vec<Color> = base.into_iter().chain(categories).collect();
+        // The selected row is a lighter background: body text stays at
+        // 4.5:1, coloured accents at 3:1 (they are also bold there).
+        for fg in [TEXT, MUTED, ACCENT, PRIMARY, WARNING, SUCCESS] {
+            let ratio = contrast(fg, SELECTED_BG);
+            assert!(ratio >= 4.5, "{fg:?} on the selection: {ratio:.2}");
+        }
+        for fg in &text {
+            let ratio = contrast(*fg, SELECTED_BG);
+            assert!(ratio >= 3.0, "{fg:?} on the selection: {ratio:.2}");
+        }
+    }
+
+    #[test]
+    fn text_styles_do_not_use_the_dim_modifier() {
+        for style in [
+            DIM,
+            PLACE_STYLE,
+            SECTION_STYLE,
+            FOOTER_STYLE,
+            countdown_style(CountdownColor::Dim),
+        ] {
+            assert!(!style.add_modifier.contains(Modifier::DIM), "{style:?}");
+        }
+        // Borders stay visible without competing with text.
+        assert!(contrast(BORDER, SURFACE) >= 2.0);
+        assert!(contrast(BORDER, SURFACE) < contrast(HINT, SURFACE));
     }
 
     #[test]
