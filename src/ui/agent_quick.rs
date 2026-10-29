@@ -10,6 +10,11 @@ use crate::agent::recommend::{self, RecommendationSet, Request, Source};
 use super::agent::Entry;
 use super::app::App;
 
+fn lang_pick(app: &App, en: &'static str, zh: &'static str) -> &'static str {
+    let lang: Lang = app.language.into();
+    lang.pick(en, zh)
+}
+
 /// Days ahead for the "upcoming CCF-A deadlines" shortcut.
 pub const UPCOMING_DAYS: i64 = 30;
 
@@ -87,6 +92,19 @@ impl App {
             return false;
         };
         match action {
+            QuickAction::Recommend if !self.agent.profile_exists => {
+                // First use: set up the profile, then recommend.
+                self.open_profile_form();
+                let notice = lang_pick(
+                    self,
+                    "No profile yet: fill in what you know, Ctrl+S saves and recommends.",
+                    "还没有研究画像：填写已知的部分，Ctrl+S 保存后立即推荐。",
+                );
+                if let Some(form) = self.agent.form.as_mut() {
+                    form.recommend_after_save = true;
+                    form.notice = Some(notice.to_string());
+                }
+            }
             QuickAction::Recommend => self.run_command("recommend"),
             QuickAction::UpcomingA => self.show_upcoming_a(),
             QuickAction::Profile => self.run_command("init"),

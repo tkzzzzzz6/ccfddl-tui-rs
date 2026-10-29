@@ -113,7 +113,36 @@ fn region_selected(region: &Region, places: &[String]) -> bool {
     region.3.iter().all(|k| places.iter().any(|p| p == k))
 }
 
+/// Region names for a place list (largest regions first), then any places
+/// no region covers: `China, Hong Kong, Macau, Macao` reads `国内`.
+pub fn place_names(places: &[String], lang: Lang) -> Vec<String> {
+    let mut covered: Vec<&str> = Vec::new();
+    let mut names = Vec::new();
+    let mut by_size: Vec<&Region> = regions().iter().collect();
+    by_size.sort_by_key(|r| std::cmp::Reverse(r.3.len()));
+    for region in by_size {
+        if region_selected(region, places) && !region.3.iter().all(|k| covered.contains(k)) {
+            covered.extend(region.3.iter().copied());
+            names.push(lang.pick(region.1, region.0).to_string());
+        }
+    }
+    names.extend(
+        places
+            .iter()
+            .filter(|p| !covered.contains(&p.as_str()))
+            .cloned(),
+    );
+    names
+}
+
 impl ProfileForm {
+    /// A form for `draft` that reports changes against `original`.
+    pub fn with_draft(original: &Profile, draft: &Profile) -> Self {
+        let mut form = Self::new(draft);
+        form.original = original.clone();
+        form
+    }
+
     pub fn new(profile: &Profile) -> Self {
         let mut interests = LineInput::new();
         interests.set(&profile.interests.join(", "));
@@ -518,15 +547,23 @@ impl ProfileForm {
             before.include_tbd.to_string(),
             after.include_tbd.to_string(),
         );
+        let places = |items: &[String]| {
+            let names = place_names(items, lang);
+            if names.is_empty() {
+                none.to_string()
+            } else {
+                names.join(", ")
+            }
+        };
         push(
             Field::PreferredPlaces,
-            list(&before.preferred_places),
-            list(&after.preferred_places),
+            places(&before.preferred_places),
+            places(&after.preferred_places),
         );
         push(
             Field::AvoidedPlaces,
-            list(&before.avoided_places),
-            list(&after.avoided_places),
+            places(&before.avoided_places),
+            places(&after.avoided_places),
         );
         out
     }
@@ -672,6 +709,32 @@ mod tests {
         assert_eq!(form.field, Field::ReadyDate);
         form.ready.clear();
         assert_eq!(form.finish(today(), Lang::En).unwrap().ready_date, None);
+    }
+
+    #[test]
+    fn places_read_as_region_names() {
+        let mut places: Vec<String> = regions()
+            .iter()
+            .find(|r| r.0 == "亚洲")
+            .unwrap()
+            .3
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        places.push("Lisbon".into());
+        assert_eq!(place_names(&places, Lang::Zh), ["亚洲", "Lisbon"]);
+        assert_eq!(
+            place_names(
+                &[
+                    "China".into(),
+                    "Hong Kong".into(),
+                    "Macau".into(),
+                    "Macao".into()
+                ],
+                Lang::Zh
+            ),
+            ["国内"]
+        );
     }
 
     #[test]

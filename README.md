@@ -234,6 +234,15 @@ order:
 - **Preview**: a line at the bottom counts the matching conferences and shows
   the best pick of each tier, updated as you edit.
 
+The top line of the panel shows the profile (topics, target ranks, ready
+date); click it to edit. Without a `profile.yaml`, shortcut 1 opens the form
+first and recommends as soon as it is saved. Conditions collected in the
+conversation (`只要 A 类`, `只看国内`, a ready date, ...) can be written into the
+profile with `s` on the cards or `/profile save`: recognised topics are added
+as topic names, ranks, categories, the ready date, the horizon, TBD and places
+are updated, exclusions and the number of picks stay in the conversation.
+Nothing is written until you confirm with `Ctrl+S`.
+
 The file keeps the same format:
 
 ```yaml
@@ -401,6 +410,8 @@ recommendations.
 | `d` | Show / hide the details of the selected card (cards start compact: a title line and one line of reasoning) |
 | `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
 | `v` | The table shows only this round's conferences (`v` again or `Esc` in the table shows all) |
+| `s` | Save the follow-up conditions into the profile: the form opens with the changes listed; `Ctrl+S` confirms (also `/profile save`) |
+| `p` | Edit the profile |
 | `y` | Copy the selected card as Markdown (OSC 52; terminals without support ignore it, use `/export`) |
 | `<` / `>` | Wider / narrower panel (beside the table); dragging its left border works too, `F2` resets |
 | `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
@@ -425,7 +436,8 @@ Chinese IMEs show their candidate window next to the text. Pasted text is
 inserted at the cursor and never sent by itself: line breaks become spaces
 (bracketed paste; the legacy Windows console does not support it).
 
-Slash commands: `/recommend [note]`, `/init` and `/profile` (the profile form), `/export [path]` (Markdown, default
+Slash commands: `/recommend [note]`, `/init` and `/profile` (the profile form), `/profile save` (conditions into
+the profile), `/export [path]` (Markdown, default
 `~/.ccfddl/recommendations-<time>.md`; exports the round on screen), `/setup` (connect a model),
 `/model` (show saved configurations), `/model <name>` (switch to one, or use a
 model for this session), `/model list` (the provider's models),

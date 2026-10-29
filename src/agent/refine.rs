@@ -578,6 +578,62 @@ impl Constraints {
         profile
     }
 
+    /// The profile with these conditions written into it, for
+    /// `/profile save`: recognised topics join the interests (as topic
+    /// names, not the whole sentence), the other conditions replace or
+    /// extend the matching fields. Exclusions and the number of picks are
+    /// per-conversation and stay out.
+    pub fn merge_into(&self, profile: &Profile, lang: Lang) -> Profile {
+        let mut out = profile.clone();
+        if let Some(text) = &self.interests {
+            let names: Vec<String> = tags_for_text(text)
+                .iter()
+                .map(|t| super::topics::tag_name(t, lang.is_zh()).to_string())
+                .filter(|n| !n.is_empty())
+                .collect();
+            // Skip topics the profile already covers in other words.
+            let known = tags_for_text(&out.interests.join(" , "));
+            let fresh: Vec<String> = names
+                .into_iter()
+                .filter(|n| tags_for_text(n).iter().any(|t| !known.contains(t)))
+                .collect();
+            push_unique(&mut out.interests, fresh);
+        }
+        if let Some(date) = self.ready_date {
+            out.ready_date = Some(date);
+        }
+        if !self.only_ranks.is_empty() {
+            out.target_ranks = self.only_ranks.clone();
+        }
+        if !self.categories.is_empty() {
+            out.categories = self.categories.clone();
+        }
+        if self.no_tbd {
+            out.include_tbd = false;
+        }
+        if let Some(days) = self.horizon_days {
+            out.horizon_days = days;
+        }
+        out.avoided_places.retain(|p| {
+            !self
+                .preferred_places
+                .iter()
+                .any(|q| q.eq_ignore_ascii_case(p))
+        });
+        out.preferred_places.retain(|p| {
+            !self
+                .avoided_places
+                .iter()
+                .any(|q| q.eq_ignore_ascii_case(p))
+        });
+        push_unique(
+            &mut out.preferred_places,
+            self.preferred_places.iter().cloned(),
+        );
+        push_unique(&mut out.avoided_places, self.avoided_places.iter().cloned());
+        out
+    }
+
     /// Hard filters the scorer does not apply by itself.
     pub fn keeps(&self, facts: &ConferenceFacts) -> bool {
         (self.only_ranks.is_empty() || self.only_ranks.contains(&facts.ccf))
@@ -854,6 +910,39 @@ mod tests {
                 .filter(|f| c.keeps(f))
                 .all(|f| f.ccf == "A" && f.title != "CVPR")
         );
+    }
+
+    #[test]
+    fn conditions_merge_into_a_profile() {
+        let c = refine(
+            &refine(
+                &Constraints::default(),
+                "我做多模态大模型，2027-03-01 能写完",
+            ),
+            "只要 A 类，只看国内，排除 CVPR，半年内，多推荐几个",
+        );
+        let base = Profile {
+            interests: vec!["program analysis".into()],
+            avoided_places: vec!["China".into()],
+            ..Profile::default()
+        };
+        let merged = c.merge_into(&base, Lang::Zh);
+        assert_eq!(merged.interests[0], "program analysis");
+        assert!(merged.interests.len() > 1, "{:?}", merged.interests);
+        // Topic names, not the sentence, and they are recognised again.
+        assert!(merged.interests.iter().all(|i| !i.contains("2027")));
+        assert!(
+            merged.interests[1..]
+                .iter()
+                .all(|i| !tags_for_text(i).is_empty())
+        );
+        assert_eq!(merged.ready_date, parse_date("2027-03-01"));
+        assert_eq!(merged.target_ranks, ["A"]);
+        assert_eq!(merged.horizon_days, 182);
+        assert!(merged.preferred_places.contains(&"China".to_string()));
+        assert!(merged.avoided_places.is_empty());
+        // Merging twice adds nothing new.
+        assert_eq!(c.merge_into(&merged, Lang::Zh), merged);
     }
 
     #[test]

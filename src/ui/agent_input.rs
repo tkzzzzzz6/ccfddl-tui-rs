@@ -44,7 +44,7 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "profile",
-        args: "",
+        args: "[save]",
         en: "View and edit the profile",
         zh: "查看并编辑画像",
     },

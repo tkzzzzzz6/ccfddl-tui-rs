@@ -938,6 +938,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("?", tr(language, "Ask", "追问")),
                 ("v", tr(language, "Only these", "只看推荐")),
                 ("y", tr(language, "Copy", "复制")),
+                ("s", tr(language, "Save as profile", "存为画像")),
             ];
             if app.agent.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));

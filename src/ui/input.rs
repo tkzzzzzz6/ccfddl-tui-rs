@@ -189,6 +189,8 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('?') => app.ask_about_card(),
         KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('y') => app.copy_card(),
+        KeyCode::Char('s') => app.save_conditions_as_profile(),
+        KeyCode::Char('p') => app.open_profile_form(),
         KeyCode::Char('<') => app.resize_panel(PANEL_STEP),
         KeyCode::Char('>') => app.resize_panel(-PANEL_STEP),
         KeyCode::Char('[') => app.show_round(-1),
@@ -322,6 +324,14 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         .find(|(area, _, _)| area.contains(point))
     {
         app.click_profile_form(field, option);
+        return Outcome::Continue;
+    }
+    if view
+        .layout
+        .agent_profile_line
+        .is_some_and(|line| line.contains(point))
+    {
+        app.open_profile_form();
         return Outcome::Continue;
     }
     if app.agent.form.is_some() && view.layout.agent.is_some_and(|a| a.contains(point)) {

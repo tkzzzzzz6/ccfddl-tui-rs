@@ -414,7 +414,14 @@ pub fn render_agent(
     } else {
         0
     };
-    let [transcript_area, quick_area, cards_area, input_area] = Layout::vertical([
+    let [
+        status_area,
+        transcript_area,
+        quick_area,
+        cards_area,
+        input_area,
+    ] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(quick_height),
         Constraint::Length(cards_height),
@@ -424,6 +431,23 @@ pub fn render_agent(
     if quick_height > 0 {
         render_quick_actions(frame, app, view, quick_area, lang);
     }
+    // The profile in one line; click (or p on the cards) to edit it.
+    let (status_text, has_profile) = app.profile_status();
+    let status_style = if has_profile {
+        Style::new().fg(theme::MUTED)
+    } else {
+        Style::new().fg(theme::WARNING)
+    };
+    let edit = lang.pick("  ✎ edit", "  ✎ 编辑");
+    let text = truncate(&status_text, width.saturating_sub(text_width(edit)));
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(text, status_style),
+            Span::styled(edit, theme::TITLE_STYLE),
+        ])),
+        status_area,
+    );
+    view.layout.agent_profile_line = Some(status_area);
     view.layout.agent_transcript = transcript_area;
     view.layout.agent_cards_area = cards_area;
     view.layout.agent_input = input_area;

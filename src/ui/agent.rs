@@ -109,6 +109,8 @@ pub struct AgentPanel {
     pub profile: Profile,
     pub profile_path: PathBuf,
     profile_loaded: bool,
+    /// `profile.yaml` exists; without it, shortcut 1 opens the form first.
+    pub profile_exists: bool,
     pub llm: Option<LlmConfig>,
     pub client_factory: ClientFactory,
     /// The research-profile form (`/init`, `/profile`, `p`).
@@ -168,6 +170,7 @@ impl AgentPanel {
             profile: Profile::default(),
             profile_path,
             profile_loaded: false,
+            profile_exists: false,
             llm,
             client_factory: Box::new(|config| Box::new(OpenAiClient::new(config.clone()))),
             form: None,
@@ -248,7 +251,10 @@ impl AgentPanel {
         }
         self.profile_loaded = true;
         match Profile::load(&self.profile_path) {
-            Ok(Some(profile)) => self.profile = profile,
+            Ok(Some(profile)) => {
+                self.profile = profile;
+                self.profile_exists = true;
+            }
             Ok(None) => {}
             Err(error) => self.error(match lang {
                 Lang::Zh => format!("读取画像失败：{error}"),
@@ -731,6 +737,10 @@ impl App {
                 };
                 self.start_agent_turn(&prompt);
             }
+            "profile" if arg.eq_ignore_ascii_case("save") => {
+                self.agent.entries.pop();
+                self.save_conditions_as_profile();
+            }
             "profile" => {
                 self.agent.entries.pop();
                 self.open_profile_form();
@@ -866,8 +876,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · y copy as Markdown · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · y 复制为 Markdown · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }
@@ -921,6 +931,7 @@ pub(crate) mod tests {
         // Horizon must cover the far-future fixture dates.
         app.agent.profile.horizon_days = 100_000;
         app.agent.profile_loaded = true;
+        app.agent.profile_exists = true;
         (app, dir)
     }
 
