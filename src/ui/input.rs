@@ -149,6 +149,8 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::PageUp => app.scroll_transcript(AGENT_PAGE),
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
         KeyCode::Char('l') if ctrl => app.toggle_language(),
+        KeyCode::Char('p') if ctrl => app.open_profile_form(),
+        KeyCode::F(3) => app.open_profile_form(),
         _ if is_panel_size_key(&key) => app.cycle_panel_size(),
         KeyCode::Char(c @ '1'..='4') if !ctrl && app.quick_actions_visible() => {
             app.run_quick_action(c as usize - '1' as usize);
@@ -190,7 +192,8 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('y') => app.copy_card(),
         KeyCode::Char('s') => app.save_conditions_as_profile(),
-        KeyCode::Char('p') => app.open_profile_form(),
+        // `p`, Ctrl+P (same key code) and F3, as in the input.
+        KeyCode::Char('p') | KeyCode::F(3) => app.open_profile_form(),
         KeyCode::Char('<') => app.resize_panel(PANEL_STEP),
         KeyCode::Char('>') => app.resize_panel(-PANEL_STEP),
         KeyCode::Char('[') => app.show_round(-1),
@@ -847,6 +850,33 @@ mod tests {
                 state: KeyEventState::NONE,
             },
         )
+    }
+
+    #[test]
+    fn ctrl_p_and_f3_open_the_profile_form_while_p_is_typed() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('a'));
+        type_text(&mut app, "program analysis");
+        assert_eq!(app.agent.input, "program analysis");
+        assert!(app.agent.form.is_none());
+
+        press_ctrl(&mut app, 'p');
+        assert!(app.agent.form.is_some());
+        // Inside the form Ctrl+P is not special; Esc closes it.
+        press_ctrl(&mut app, 'p');
+        assert!(app.agent.form.is_some());
+        press(&mut app, KeyCode::Esc);
+        assert!(app.agent.form.is_none());
+        assert_eq!(app.agent.input, "program analysis", "the draft survives");
+
+        press(&mut app, KeyCode::F(3));
+        assert!(app.agent.form.is_some());
+        press(&mut app, KeyCode::Esc);
+
+        app.focus = Focus::AgentCards;
+        press(&mut app, KeyCode::F(3));
+        assert!(app.agent.form.is_some());
+        assert_eq!(app.focus, Focus::Agent);
     }
 
     #[test]

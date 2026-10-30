@@ -393,6 +393,7 @@ recommendations.
 | `Enter` | Send |
 | `1`–`4` | Run a shortcut (first screen, empty input) |
 | `Ctrl+L` | Toggle language |
+| `Ctrl+P` / `F3` | Open the profile form (`F3` where the terminal takes `Ctrl+P`, e.g. VS Code) |
 | `PgUp` / `PgDn` | Scroll the transcript |
 | `Tab` | To the cards (or the table when there are none) |
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
@@ -411,7 +412,7 @@ recommendations.
 | `?` | Ask about the selected card: the input is filled with "Why ACL 2027?" to edit and send |
 | `v` | The table shows only this round's conferences (`v` again or `Esc` in the table shows all) |
 | `s` | Save the follow-up conditions into the profile: the form opens with the changes listed; `Ctrl+S` confirms (also `/profile save`) |
-| `p` | Edit the profile |
+| `p`, `Ctrl+P`, `F3` | Edit the profile |
 | `y` | Copy the selected card as Markdown (OSC 52; terminals without support ignore it, use `/export`) |
 | `<` / `>` | Wider / narrower panel (beside the table); dragging its left border works too, `F2` resets |
 | `[` / `]` | Earlier / later round of recommendations (the last 5 are kept) |
