@@ -11,6 +11,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
+use super::agent_results::CardsView;
 use crate::agent::recommend::{Recommendation, Source, Tier};
 use crate::agent::{Lang, topics};
 use crate::format::get_countdown_color;
@@ -117,9 +118,16 @@ pub(crate) fn tier_style(tier: Tier) -> Style {
     Style::new().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'static>> {
+/// Transcript lines, and which of them are round markers (line index,
+/// history id) so clicks can open the round.
+fn transcript_lines(
+    app: &App,
+    width: usize,
+    now: DateTime<Utc>,
+) -> (Vec<Line<'static>>, Vec<(usize, u64)>) {
     let lang: Lang = app.language.into();
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut markers: Vec<(usize, u64)> = Vec::new();
     for (index, entry) in app.agent.entries.iter().enumerate() {
         match entry {
             Entry::User(text) => {
@@ -172,6 +180,52 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
                 Style::new().fg(theme::ERROR),
                 width,
             ),
+            Entry::Round(id) => {
+                let history = &app.agent.round_history;
+                let Some(position) = history.position(*id) else {
+                    continue;
+                };
+                let round = &history.rounds[position];
+                let time = round
+                    .set
+                    .generated_at
+                    .with_timezone(&chrono::Local)
+                    .format("%H:%M");
+                let shown =
+                    app.agent.round_cursor == position && app.agent.recommendations.is_some();
+                let text = match lang {
+                    Lang::Zh => format!(
+                        "第 {} 轮 · {} 个推荐 · {time}{}",
+                        position + 1,
+                        round.set.items.len(),
+                        if shown {
+                            " · 正在显示"
+                        } else {
+                            " · 点击查看"
+                        }
+                    ),
+                    Lang::En => format!(
+                        "round {} · {} picks · {time}{}",
+                        position + 1,
+                        round.set.items.len(),
+                        if shown {
+                            " · on screen"
+                        } else {
+                            " · click to show"
+                        }
+                    ),
+                };
+                markers.push((lines.len(), *id));
+                lines.push(Line::from(vec![
+                    Span::styled("  ▸ ", theme::TITLE_STYLE),
+                    Span::styled(
+                        truncate(&text, width.saturating_sub(4)),
+                        Style::new()
+                            .fg(theme::ACCENT)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ),
+                ]));
+            }
         }
     }
     if app.agent.is_busy() {
@@ -184,7 +238,7 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
             ),
         ]));
     }
-    lines
+    (lines, markers)
 }
 
 fn tool_label(name: &str, lang: Lang) -> String {
@@ -216,6 +270,13 @@ fn card_lines(
     let lang: Lang = app.language.into();
     let facts = &item.facts;
     let (countdown, countdown_style) = match facts.days_left(now) {
+        // A saved round can hold conferences that closed since.
+        _ if facts.deadline.is_some_and(|d| d <= now) => (
+            lang.pick("closed", "已截止").to_string(),
+            Style::new()
+                .fg(theme::HINT)
+                .add_modifier(Modifier::CROSSED_OUT),
+        ),
         Some(days) => (
             match lang {
                 Lang::Zh => format!("{days}天"),
@@ -376,6 +437,10 @@ pub fn render_agent(
         super::profile_form_view::render_form(frame, app, view, inner);
         return;
     }
+    if app.agent.history_list.is_some() {
+        super::history_list_view::render_history(frame, app, view, inner);
+        return;
+    }
 
     // Cards first, so the transcript gets whatever is left.
     let items = app
@@ -384,12 +449,46 @@ pub fn render_agent(
         .as_ref()
         .map(|set| set.items.clone())
         .unwrap_or_default();
-    let mut cards: Vec<(usize, Line<'static>)> = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        let selected = index == app.agent.card_cursor;
-        let expanded = selected && app.agent.card_details;
-        for line in card_lines(app, item, selected, expanded, cards_focused, width, now) {
-            cards.push((index, line));
+    let view_mode = app.agent.cards_view;
+    // Rows of cards; a compact row may hold two cards side by side.
+    let columns = if view_mode == CardsView::Compact && width >= 90 {
+        2
+    } else {
+        1
+    };
+    let mut cards: Vec<Vec<(usize, Line<'static>)>> = Vec::new();
+    match view_mode {
+        CardsView::Collapsed => {}
+        CardsView::Compact => {
+            let lines: Vec<(usize, Line<'static>)> = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let selected = index == app.agent.card_cursor;
+                    let line = card_lines(app, item, selected, false, cards_focused, width, now)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
+                    (index, line)
+                })
+                .collect();
+            // Column-major, like `ls`: the first half on the left.
+            let rows = lines.len().div_ceil(columns);
+            for r in 0..rows {
+                let row: Vec<(usize, Line<'static>)> = (0..columns)
+                    .filter_map(|c| lines.get(c * rows + r).cloned())
+                    .collect();
+                cards.push(row);
+            }
+        }
+        CardsView::Expanded => {
+            for (index, item) in items.iter().enumerate() {
+                let selected = index == app.agent.card_cursor;
+                let expanded = selected && app.agent.card_details;
+                for line in card_lines(app, item, selected, expanded, cards_focused, width, now) {
+                    cards.push(vec![(index, line)]);
+                }
+            }
         }
     }
     let conditions = app
@@ -398,14 +497,20 @@ pub fn render_agent(
         .as_ref()
         .map(|set| set.conditions.clone())
         .unwrap_or_default();
-    let header_rows = if conditions.is_empty() { 1 } else { 2 };
-    let cards_height = if cards.is_empty() {
-        0
+    let header_rows = if conditions.is_empty() || view_mode == CardsView::Collapsed {
+        1
     } else {
-        // Compact cards are two lines each; leave the transcript at least
-        // four rows above them.
+        2
+    };
+    let cards_height = if items.is_empty() {
+        0
+    } else if view_mode == CardsView::Collapsed {
+        1
+    } else {
+        // At most half the panel, so the conversation stays readable; the
+        // cards scroll inside their area.
         ((cards.len() + header_rows) as u16)
-            .min(inner.height.saturating_sub(6))
+            .min((inner.height / 2).max(3))
             .max(3)
     };
     let quick = app.quick_actions_visible();
@@ -453,11 +558,20 @@ pub fn render_agent(
     view.layout.agent_input = input_area;
 
     // --- Transcript -----------------------------------------------------
-    let lines = transcript_lines(app, width, now);
+    let (lines, markers) = transcript_lines(app, width, now);
     let height = transcript_area.height as usize;
     let max_scroll = lines.len().saturating_sub(height);
     app.agent.scroll = app.agent.scroll.min(max_scroll);
     let start = max_scroll - app.agent.scroll;
+    for (line, id) in markers {
+        if line >= start && line < start + height {
+            let y = transcript_area.y + (line - start) as u16;
+            view.layout.agent_round_markers.push((
+                Rect::new(transcript_area.x, y, transcript_area.width, 1),
+                id,
+            ));
+        }
+    }
     let visible: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
     frame.render_widget(Paragraph::new(visible), transcript_area);
     if app.agent.scroll > 0 {
@@ -482,14 +596,34 @@ pub fn render_agent(
             Some(Source::Llm(model)) => model.clone(),
             _ => lang.pick("offline rules", "离线规则").to_string(),
         };
-        let mut title = match lang {
-            Lang::Zh => format!("推荐 {} 个 · {source}", items.len()),
-            Lang::En => format!("{} picks · {source}", items.len()),
+        let arrow = if view_mode == CardsView::Collapsed {
+            "▸"
+        } else {
+            "▾"
+        };
+        let mut title = if view_mode == CardsView::Collapsed {
+            let count = |tier: Tier| items.iter().filter(|i| i.tier == tier).count();
+            let tiers: Vec<String> = Tier::ALL
+                .iter()
+                .filter(|t| count(**t) > 0)
+                .map(|t| format!("{} {}", t.label(lang), count(*t)))
+                .collect();
+            match lang {
+                Lang::Zh => format!("推荐 {} 个：{}", items.len(), tiers.join(" · ")),
+                Lang::En => format!("{} picks: {}", items.len(), tiers.join(" · ")),
+            }
+        } else {
+            match lang {
+                Lang::Zh => format!("推荐 {} 个 · {source}", items.len()),
+                Lang::En => format!("{} picks · {source}", items.len()),
+            }
         };
         if let Some(round) = app.round_label() {
             title = format!("{title} · {round}");
         }
-        if !cards_focused {
+        if view_mode == CardsView::Collapsed {
+            title.push_str(lang.pick(" · Ctrl+O to unfold", " · Ctrl+O 展开"));
+        } else if !cards_focused {
             title.push_str(lang.pick(" · Tab to the cards", " · Tab 进入卡片区"));
         }
         let title_style = if cards_focused {
@@ -499,11 +633,13 @@ pub fn render_agent(
         };
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!("── {title} "),
+                format!("── {arrow} {title} "),
                 title_style,
             ))),
             Rect::new(cards_area.x, cards_area.y, cards_area.width, 1),
         );
+        view.layout.agent_cards_header =
+            Some(Rect::new(cards_area.x, cards_area.y, cards_area.width, 1));
         if header_rows == 2 && cards_area.height > 2 {
             let label = lang.pick("Conditions: ", "条件：");
             let hint = lang.pick("  (/reset clears)", "  （/reset 清空）");
@@ -532,23 +668,29 @@ pub fn render_agent(
         );
         let page = body.height as usize;
         // Keep the selected card (all of its lines) in view.
-        let first = cards
-            .iter()
-            .position(|(i, _)| *i == app.agent.card_cursor)
-            .unwrap_or(0);
-        let last = cards
-            .iter()
-            .rposition(|(i, _)| *i == app.agent.card_cursor)
-            .unwrap_or(0);
+        let has_cursor = |row: &Vec<(usize, Line<'static>)>| {
+            row.iter().any(|(i, _)| *i == app.agent.card_cursor)
+        };
+        let first = cards.iter().position(has_cursor).unwrap_or(0);
+        let last = cards.iter().rposition(has_cursor).unwrap_or(0);
         let offset = if last + 1 > page {
             (last + 1 - page).min(first)
         } else {
             0
         };
-        for (row, (index, line)) in cards.into_iter().skip(offset).take(page).enumerate() {
-            let line_area = Rect::new(body.x, body.y + row as u16, body.width, 1);
-            frame.render_widget(Paragraph::new(line), line_area);
-            view.layout.agent_cards.push((line_area, index));
+        let column_width = body.width / columns as u16;
+        for (row, entries) in cards.into_iter().skip(offset).take(page).enumerate() {
+            for (column, (index, line)) in entries.into_iter().enumerate() {
+                let x = body.x + column as u16 * column_width;
+                let w = if column + 1 == columns {
+                    body.right() - x
+                } else {
+                    column_width.saturating_sub(1)
+                };
+                let line_area = Rect::new(x, body.y + row as u16, w, 1);
+                frame.render_widget(Paragraph::new(line), line_area);
+                view.layout.agent_cards.push((line_area, index));
+            }
         }
     }
 
@@ -961,12 +1103,99 @@ mod tests {
         app.agent.push_recommendations(set);
         app.focus = Focus::AgentCards;
 
+        // Expanded: two lines per card, at most half the panel, so the
+        // conversation keeps the other half; the selection stays in view.
+        let (terminal, view) = draw_app(&mut app, 100, 30);
+        let inner_height = 30 - 2 - 2; // header/footer rows, panel border
+        let cards_area = view.layout.agent_cards_area;
+        assert!(
+            cards_area.height <= inner_height / 2,
+            "{:?}",
+            screen(&terminal)
+        );
+        assert!(view.layout.agent_cards.iter().any(|(_, i)| *i == 0));
+        app.agent.card_cursor = 7;
+        let (_, view) = draw_app(&mut app, 100, 30);
+        assert!(view.layout.agent_cards.iter().any(|(_, i)| *i == 7));
+
+        // Compact: one line per card, two columns on a 100-column panel.
+        app.cycle_cards_view();
+        assert_eq!(app.agent.cards_view, CardsView::Compact);
         let (terminal, view) = draw_app(&mut app, 100, 30);
         let shown: std::collections::BTreeSet<usize> =
             view.layout.agent_cards.iter().map(|(_, i)| *i).collect();
         assert_eq!(shown.len(), 8, "{:?}", screen(&terminal));
-        // Two lines per card: the title line and one line of reasoning.
-        assert_eq!(view.layout.agent_cards.len(), 16);
+        assert_eq!(view.layout.agent_cards.len(), 8);
+        let rows: std::collections::BTreeSet<u16> =
+            view.layout.agent_cards.iter().map(|(r, _)| r.y).collect();
+        assert_eq!(rows.len(), 4, "two columns");
+
+        // Collapsed: one summary line, the transcript gets the rest.
+        app.cycle_cards_view();
+        assert_eq!(app.agent.cards_view, CardsView::Collapsed);
+        assert_eq!(app.focus, Focus::Agent, "no focus on folded cards");
+        let (terminal, view) = draw_app(&mut app, 100, 30);
+        assert_eq!(view.layout.agent_cards_area.height, 1);
+        assert!(view.layout.agent_cards.is_empty());
+        let text = screen(&terminal).join("\n");
+        assert!(text.contains("▸ 8 picks: Stretch 8"), "{text}");
+        assert!(text.contains("Ctrl+O to unfold"), "{text}");
+
+        // Tab (focus on the cards) unfolds them to compact.
+        app.focus_next_from_input();
+        assert_eq!(app.focus, Focus::AgentCards);
+        assert_eq!(app.agent.cards_view, CardsView::Compact);
+        // The user's choice was collapsed; a new round arrives compact.
+        app.cycle_cards_view();
+        app.cycle_cards_view();
+        assert_eq!(app.agent.cards_view_pref, CardsView::Expanded);
+    }
+
+    #[test]
+    fn text_answers_fold_the_cards_and_new_rounds_unfold_them() {
+        use crate::ui::agent::tests::app_with;
+        use crate::ui::view::ViewState;
+        let (mut app, _dir) = app_with(None);
+        app.open_agent();
+        app.agent.profile.horizon_days = 100_000;
+        let run = |app: &mut App, text: &str| {
+            app.agent.input.set(text);
+            app.submit_agent_input();
+            while app.agent.is_busy() {
+                app.poll_agent();
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        run(&mut app, "computer vision");
+        assert_eq!(app.agent.cards_view, CardsView::Expanded);
+        // An offline "why" answer is text: the cards fold.
+        run(&mut app, "why CVPR 2099?");
+        assert_eq!(app.agent.cards_view, CardsView::Collapsed);
+        // A new round unfolds them again (to the remembered choice).
+        run(&mut app, "computer vision");
+        assert_eq!(app.agent.cards_view, CardsView::Expanded);
+
+        // Clicking the title line folds and unfolds.
+        let mut view = ViewState::new();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal
+            .draw(|f| crate::ui::render::draw_with_view(f, &mut app, &mut view, Utc::now()))
+            .unwrap();
+        let header = view.layout.agent_cards_header.expect("cards title");
+        crate::ui::input::handle_mouse(
+            &mut app,
+            &mut view,
+            ratatui::crossterm::event::MouseEvent {
+                kind: ratatui::crossterm::event::MouseEventKind::Down(
+                    ratatui::crossterm::event::MouseButton::Left,
+                ),
+                column: header.x + 2,
+                row: header.y,
+                modifiers: ratatui::crossterm::event::KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(app.agent.cards_view, CardsView::Compact);
     }
 
     #[test]

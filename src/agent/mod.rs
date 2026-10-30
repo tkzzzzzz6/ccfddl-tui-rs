@@ -17,6 +17,7 @@
 pub mod cli_setup;
 pub mod config;
 pub mod explain;
+pub mod history_store;
 pub mod llm;
 pub mod profile;
 pub mod providers;

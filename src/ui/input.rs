@@ -133,6 +133,10 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         app.profile_form_key(key);
         return Outcome::Continue;
     }
+    if app.agent.history_list.is_some() {
+        app.history_list_key(key);
+        return Outcome::Continue;
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let popup = app.agent.completion_visible();
     match key.code {
@@ -150,6 +154,7 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
         KeyCode::Char('l') if ctrl => app.toggle_language(),
         KeyCode::Char('p') if ctrl => app.open_profile_form(),
+        KeyCode::Char('o') if ctrl => app.cycle_cards_view(),
         KeyCode::F(3) => app.open_profile_form(),
         _ if is_panel_size_key(&key) => app.cycle_panel_size(),
         KeyCode::Char(c @ '1'..='4') if !ctrl && app.quick_actions_visible() => {
@@ -191,6 +196,8 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('?') => app.ask_about_card(),
         KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('y') => app.copy_card(),
+        KeyCode::Char('z') => app.cycle_cards_view(),
+        KeyCode::Char('h') => app.open_history(),
         KeyCode::Char('s') => app.save_conditions_as_profile(),
         // `p`, Ctrl+P (same key code) and F3, as in the input.
         KeyCode::Char('p') | KeyCode::F(3) => app.open_profile_form(),
@@ -218,6 +225,16 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
 /// A bracketed paste: inserted at the cursor, never submitted.
 pub fn handle_paste(app: &mut App, text: &str) -> Outcome {
     match app.focus {
+        Focus::Agent if app.agent.history_list.is_some() => {
+            if let Some(list) = app.agent.history_list.as_mut() {
+                let line = text.replace(['\r', '\n'], " ");
+                if let Some(name) = list.renaming.as_mut() {
+                    name.insert_str(&line);
+                } else if list.filtering {
+                    list.filter.insert_str(&line);
+                }
+            }
+        }
         Focus::Agent => match app.agent.form.as_mut() {
             Some(form) => form.paste(text),
             None => {
@@ -364,8 +381,38 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
             view.sync_table(app);
         } else {
             app.agent.card_cursor = index;
-            app.focus = Focus::AgentCards;
+            app.focus_cards();
         }
+        return Outcome::Continue;
+    }
+    if let Some(&(_, position)) = view
+        .layout
+        .agent_history_rows
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        app.click_history_row(position);
+        return Outcome::Continue;
+    }
+    if app.agent.history_list.is_some() && view.layout.agent.is_some_and(|a| a.contains(point)) {
+        app.focus = Focus::Agent;
+        return Outcome::Continue;
+    }
+    if let Some(&(_, id)) = view
+        .layout
+        .agent_round_markers
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        app.open_round(id);
+        return Outcome::Continue;
+    }
+    if view
+        .layout
+        .agent_cards_header
+        .is_some_and(|header| header.contains(point))
+    {
+        app.cycle_cards_view();
         return Outcome::Continue;
     }
     if let Some(&(_, index)) = view
@@ -379,11 +426,11 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
     if view.layout.agent.is_some_and(|area| area.contains(point)) {
-        app.focus = if view.layout.agent_cards_area.contains(point) && app.has_cards() {
-            Focus::AgentCards
+        if view.layout.agent_cards_area.contains(point) && app.has_cards() {
+            app.focus_cards();
         } else {
-            Focus::Agent
-        };
+            app.focus = Focus::Agent;
+        }
         return Outcome::Continue;
     }
 
@@ -1128,7 +1175,7 @@ mod tests {
             app.poll_agent();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(app.agent.rounds.len(), 2);
+        assert_eq!(app.agent.round_history.rounds.len(), 2);
         app.focus = Focus::AgentCards;
         press(&mut app, KeyCode::Char('['));
         assert_eq!(app.agent.round_cursor, 0);

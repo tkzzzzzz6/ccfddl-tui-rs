@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use crate::agent::config::Overrides;
+use crate::agent::history_store::{self, History};
 use crate::agent::llm::{ChatMessage, LlmClient, LlmConfig, LlmError, OpenAiClient, list_models};
 use crate::agent::profile::Profile;
 use crate::agent::providers;
@@ -26,7 +27,7 @@ use crate::agent::{Lang, Recommendation};
 use crate::data::ConferenceRow;
 
 use super::agent_input::SLASH_COMMANDS;
-use super::agent_results::PanelSize;
+use super::agent_results::{CardsView, PanelSize};
 use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
@@ -56,6 +57,8 @@ pub enum Entry {
     },
     Info(String),
     Error(String),
+    /// A round of recommendations, by history id (click to show it).
+    Round(u64),
 }
 
 pub type ClientFactory = Box<dyn Fn(&LlmConfig) -> Box<dyn LlmClient>>;
@@ -85,11 +88,21 @@ pub struct AgentPanel {
     pub card_cursor: usize,
     /// Show the details of the selected card (`d` toggles).
     pub card_details: bool,
-    /// The last few recommendation rounds, oldest first.
-    pub rounds: Vec<RecommendationSet>,
-    /// Which round `recommendations` shows.
+    /// Every saved round of recommendations, oldest first
+    /// (`agent-history.json`).
+    pub round_history: History,
+    /// `agent-history.json`; `None` keeps the history in memory.
+    pub history_path: Option<PathBuf>,
+    /// Which round `recommendations` shows, as an index into the history.
     pub round_cursor: usize,
+    /// The request that started the running turn; names the next round.
+    pub last_prompt: String,
     pub panel_size: PanelSize,
+    /// How the cards are shown now, and the user's last choice.
+    pub cards_view: CardsView,
+    pub cards_view_pref: CardsView,
+    /// The running turn produced cards (otherwise its text answer gets room).
+    pub turn_cards: bool,
     /// Offline follow-up conditions accumulated over turns (`/reset`).
     pub constraints: Constraints,
     /// Width chosen by dragging the divider or with `<` / `>`.
@@ -115,6 +128,8 @@ pub struct AgentPanel {
     pub client_factory: ClientFactory,
     /// The research-profile form (`/init`, `/profile`, `p`).
     pub form: Option<ProfileForm>,
+    /// The `/history` list, when open.
+    pub history_list: Option<super::history_list::HistoryList>,
     /// Cached preview of the form's draft.
     pub form_preview: Option<(Profile, super::agent_profile::Preview)>,
     /// `/setup` questionnaire for the model connection.
@@ -156,10 +171,17 @@ impl AgentPanel {
             recommendations: None,
             card_cursor: 0,
             card_details: false,
-            rounds: Vec::new(),
+            round_history: History::with_limit(history_store::limit_from_config(&config_path)),
+            history_path: profile_path
+                .parent()
+                .map(|dir| dir.join("agent-history.json")),
             round_cursor: 0,
+            last_prompt: String::new(),
             panel_size: PanelSize::Half,
             constraints: Constraints::default(),
+            cards_view: CardsView::default(),
+            cards_view_pref: CardsView::default(),
+            turn_cards: false,
             session_path,
             session_loaded: false,
             panel_width: None,
@@ -175,6 +197,7 @@ impl AgentPanel {
             client_factory: Box::new(|config| Box::new(OpenAiClient::new(config.clone()))),
             form: None,
             form_preview: None,
+            history_list: None,
             setup: None,
             setup_rx: None,
             last_models: Vec::new(),
@@ -187,6 +210,7 @@ impl AgentPanel {
     }
 
     pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.round_history.limit = history_store::limit_from_config(&path);
         self.config_path = path;
         self
     }
@@ -274,10 +298,18 @@ impl AgentPanel {
             path,
             &SavedSession {
                 input_history: self.input_history.clone(),
-                round: self.rounds.last().cloned(),
+                round: None,
                 constraints: self.constraints.clone(),
+                cards_view: Some(self.cards_view_pref.key().to_string()),
             },
         );
+    }
+
+    /// Write the round history (best effort, after the saved one was read).
+    pub fn save_history(&self) {
+        if let Some(path) = self.history_path.as_deref().filter(|_| self.session_loaded) {
+            let _ = history_store::save(path, &self.round_history);
+        }
     }
 
     fn restore_session(&mut self, conferences: &[crate::model::Conference], lang: Lang) {
@@ -285,7 +317,28 @@ impl AgentPanel {
             return;
         }
         self.session_loaded = true;
+        let now = Utc::now();
+        if let Some(path) = self.history_path.clone() {
+            match history_store::load(&path, conferences, now, self.round_history.limit) {
+                Ok(history) => self.round_history = history,
+                Err(error) => {
+                    // Keep the broken file for the user; start in memory.
+                    self.history_path = None;
+                    self.error(match lang {
+                        Lang::Zh => format!(
+                            "推荐历史文件无法读取，本次不会保存历史：{error}（{}）",
+                            path.display()
+                        ),
+                        Lang::En => format!(
+                            "Could not read the recommendation history, so it will not be saved this time: {error} ({})",
+                            path.display()
+                        ),
+                    });
+                }
+            }
+        }
         let Some(path) = self.session_path.clone() else {
+            self.show_latest_round(lang, now);
             return;
         };
         match session_store::load(&path, conferences, Utc::now()) {
@@ -295,32 +348,23 @@ impl AgentPanel {
                     input_history,
                     round,
                     constraints,
+                    cards_view,
                 } = restored.session;
                 self.input_history = input_history;
                 self.constraints = constraints;
-                if let Some(round) = round {
-                    self.push_recommendations(round);
+                if let Some(view) = cards_view.as_deref().and_then(CardsView::from_key) {
+                    self.cards_view_pref = view;
+                    self.cards_view = view;
                 }
-                if restored.saved > 0 {
-                    let closed = restored.saved - restored.kept;
-                    self.info(match (lang, closed) {
-                        (Lang::Zh, 0) => format!(
-                            "已恢复上次的推荐（{} 个）。/forget 可清除保存的会话。",
-                            restored.kept
-                        ),
-                        (Lang::Zh, _) => format!(
-                            "已恢复上次的推荐（{}/{}，{closed} 个已截止或不在数据中）。",
-                            restored.kept, restored.saved
-                        ),
-                        (Lang::En, 0) => format!(
-                            "Restored the last recommendations ({}). /forget deletes the saved session.",
-                            restored.kept
-                        ),
-                        (Lang::En, _) => format!(
-                            "Restored the last recommendations ({}/{}; {closed} closed or no longer in the data).",
-                            restored.kept, restored.saved
-                        ),
-                    });
+                // A round saved by 0.3 in the session file moves into
+                // the history once.
+                if let Some(round) = round
+                    && self.round_history.rounds.is_empty()
+                {
+                    let name = lang.pick("(earlier session)", "（上次会话）");
+                    self.round_history.push(name, round);
+                    self.save_history();
+                    self.save_session();
                 }
             }
             Err(error) => self.error(match lang {
@@ -328,6 +372,45 @@ impl AgentPanel {
                 Lang::En => format!("Ignored an unreadable saved session: {error}"),
             }),
         }
+        self.show_latest_round(lang, now);
+    }
+
+    /// After a restart: show the newest round and say what is in it.
+    fn show_latest_round(&mut self, lang: Lang, now: chrono::DateTime<Utc>) {
+        let Some(round) = self.round_history.rounds.last() else {
+            return;
+        };
+        let count = self.round_history.rounds.len();
+        let items = round.set.items.len();
+        let closed = round.closed(now);
+        let id = round.id;
+        self.show_saved_round(count - 1);
+        let mut text = match lang {
+            Lang::Zh => format!("已恢复上次的推荐（{items} 个"),
+            Lang::En => format!("Restored the last recommendations ({items}"),
+        };
+        if closed > 0 {
+            text.push_str(&match lang {
+                Lang::Zh => format!("，{closed} 个已截止"),
+                Lang::En => format!("; {closed} closed"),
+            });
+        }
+        text.push_str(&match lang {
+            Lang::Zh => format!("）。历史共 {count} 轮：[ ] 翻看，/history 管理。"),
+            Lang::En => format!("). {count} rounds saved: [ ] to browse, /history to manage."),
+        });
+        self.info(text);
+        self.entries.push(Entry::Round(id));
+    }
+
+    /// Show history round `index` as the cards.
+    pub fn show_saved_round(&mut self, index: usize) {
+        let Some(round) = self.round_history.rounds.get(index) else {
+            return;
+        };
+        self.round_cursor = index;
+        self.recommendations = Some(round.set.clone());
+        self.card_cursor = 0;
     }
 
     fn welcome(&mut self, lang: Lang) {
@@ -416,11 +499,11 @@ impl App {
 
     /// Tab from the input: the cards when there are any, else the table.
     pub fn focus_next_from_input(&mut self) {
-        self.focus = if self.has_cards() {
-            Focus::AgentCards
+        if self.has_cards() {
+            self.focus_cards();
         } else {
-            Focus::Table
-        };
+            self.focus = Focus::Table;
+        }
     }
 
     pub fn focus_agent_input(&mut self) {
@@ -464,6 +547,8 @@ impl App {
             self.cancel_setup();
         } else if self.agent.form.is_some() {
             self.cancel_profile_form();
+        } else if self.agent.history_list.is_some() {
+            self.agent.history_list = None;
         } else if !self.agent.input.is_empty() {
             self.agent.input.clear();
         } else {
@@ -482,6 +567,7 @@ impl App {
         }
         self.agent.ensure_profile(lang);
         self.agent.entries.push(Entry::User(text.to_string()));
+        self.agent.last_prompt = text.to_string();
         self.agent.scroll = 0;
         // Offline, a question about one conference is answered from the
         // rules right away instead of producing a new set of cards.
@@ -498,6 +584,9 @@ impl App {
             );
             if let Some(answer) = answer {
                 self.agent.entries.push(Entry::Assistant(answer));
+                if self.has_cards() {
+                    self.agent.cards_view = CardsView::Collapsed;
+                }
                 return;
             }
         }
@@ -527,6 +616,7 @@ impl App {
             .llm
             .as_ref()
             .map(|config| (self.agent.client_factory)(config));
+        self.agent.turn_cards = false;
         self.agent.handle = Some(worker::spawn(AgentJob {
             ctx,
             history: self.agent.history.clone(),
@@ -609,6 +699,10 @@ impl App {
                     panel.history = history;
                 }
                 panel.handle = None;
+                // A text-only answer gets the room the cards were using.
+                if !panel.turn_cards && panel.recommendations.is_some() {
+                    panel.cards_view = CardsView::Collapsed;
+                }
                 panel.save_session();
             }
             AgentEvent::Failed(error) => {
@@ -760,18 +854,45 @@ impl App {
                     self.agent.error(error.to_string());
                     return;
                 }
+                if let Some(path) = &self.agent.history_path
+                    && let Err(error) = history_store::forget(path)
+                {
+                    self.agent.error(error.to_string());
+                    return;
+                }
                 self.agent.input_history.clear();
                 self.agent.constraints = Constraints::default();
-                self.agent.rounds.clear();
+                let limit = self.agent.round_history.limit;
+                self.agent.round_history = History::with_limit(limit);
+                self.agent.entries.retain(|e| !matches!(e, Entry::Round(_)));
                 self.agent.recommendations = None;
                 self.agent.round_cursor = 0;
                 self.agent.card_cursor = 0;
                 self.only_recommended = false;
                 self.refresh_visible();
                 self.agent.info(lang.pick(
-                    "Saved session deleted: input history, recommendations and conditions.",
-                    "已删除保存的会话：输入历史、推荐结果和追问条件。",
+                    "Saved session deleted: input history, recommendation history and conditions.",
+                    "已删除保存的会话：输入历史、推荐历史和追问条件。",
                 ));
+            }
+            "history" if arg.is_empty() => {
+                self.agent.entries.pop();
+                self.open_history();
+            }
+            "history" if arg.eq_ignore_ascii_case("clear") => {
+                let removed = self.agent.round_history.clear_unpinned();
+                self.agent.save_history();
+                self.after_history_change();
+                self.agent.info(match lang {
+                    Lang::Zh => format!(
+                        "已删除 {removed} 轮未置顶的推荐，保留 {} 轮置顶。",
+                        self.agent.round_history.rounds.len()
+                    ),
+                    Lang::En => format!(
+                        "Deleted {removed} unpinned rounds; {} pinned kept.",
+                        self.agent.round_history.rounds.len()
+                    ),
+                });
             }
             "reset" => {
                 self.agent.constraints = Constraints::default();
@@ -785,15 +906,11 @@ impl App {
                 self.agent.constraints = Constraints::default();
                 self.agent.entries.clear();
                 self.agent.history.clear();
-                self.agent.recommendations = None;
-                self.agent.rounds.clear();
-                self.agent.round_cursor = 0;
-                self.only_recommended = false;
-                self.refresh_visible();
-                self.agent.card_cursor = 0;
                 self.agent.save_session();
-                self.agent
-                    .info(lang.pick("Conversation cleared.", "对话已清空。"));
+                self.agent.info(lang.pick(
+                    "Conversation cleared. Saved recommendations stay: [ ] or /history.",
+                    "对话已清空，推荐历史仍保留：[ ] 翻看或 /history 管理。",
+                ));
             }
             "export" => self.export_command(arg),
             "lang" => {
@@ -876,8 +993,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Ctrl+O fold the cards · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · z fold · h saved rounds · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Ctrl+O 收放卡片 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · z 收放 · h 推荐历史 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }
@@ -1004,6 +1121,40 @@ pub(crate) mod tests {
         assert!(!dir.path().join("agent-session.json").exists());
         assert!(next.agent.input_history.is_empty());
         assert!(next.agent.recommendations.is_none());
+    }
+
+    #[test]
+    fn a_round_from_an_old_session_file_moves_into_the_history() {
+        let (mut app, dir) = app_with(None);
+        // Produce a round, then pretend 0.3 wrote it into the session file.
+        let (mut first, _first_dir) = app_with(None);
+        first.open_agent();
+        type_and_enter(&mut first, "computer vision");
+        wait(&mut first);
+        let round = first.agent.recommendations.clone().unwrap();
+        let legacy = serde_json::json!({
+            "version": 1,
+            "input_history": ["computer vision"],
+            "round": crate::agent::session_store::round_to_json(&round),
+        });
+        std::fs::write(dir.path().join("agent-session.json"), legacy.to_string()).unwrap();
+
+        app.open_agent();
+        assert_eq!(app.agent.round_history.rounds.len(), 1);
+        assert_eq!(app.agent.round_history.rounds[0].name, "(earlier session)");
+        assert_eq!(
+            app.agent.recommendations.as_ref().unwrap().items,
+            round.items
+        );
+        assert!(dir.path().join("agent-history.json").exists());
+        let session = std::fs::read_to_string(dir.path().join("agent-session.json")).unwrap();
+        assert!(!session.contains("\"round\""), "{session}");
+        assert!(
+            app.agent
+                .entries
+                .iter()
+                .any(|e| matches!(e, Entry::Info(t) if t.contains("1 rounds saved")))
+        );
     }
 
     #[test]
@@ -1165,7 +1316,9 @@ pub(crate) mod tests {
         type_and_enter(&mut app, "/lang");
         assert_eq!(app.language, Language::Zh);
         type_and_enter(&mut app, "/clear");
-        assert!(app.agent.recommendations.is_none());
+        // The conversation goes, the saved rounds and the cards stay.
+        assert!(app.agent.recommendations.is_some());
+        assert!(!app.agent.round_history.rounds.is_empty());
         assert_eq!(app.agent.entries.len(), 1);
     }
 

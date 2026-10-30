@@ -255,6 +255,16 @@ fn build_facts(
     now: DateTime<Utc>,
 ) -> Option<ConferenceFacts> {
     let (year, timeline, deadline) = upcoming_edition(conf, now)?;
+    Some(facts_from(conf, ambiguous, year, timeline, deadline))
+}
+
+fn facts_from(
+    conf: &Conference,
+    ambiguous: &BTreeSet<String>,
+    year: &ConferenceYear,
+    timeline: Option<&Timeline>,
+    deadline: Option<DateTime<Utc>>,
+) -> ConferenceFacts {
     let is_tbd = deadline.is_none();
     let deadline_text = match (timeline, deadline) {
         (Some(t), Some(_)) => format!("{} ({})", t.deadline, year.timezone),
@@ -264,7 +274,7 @@ fn build_facts(
     let abstract_deadline = abstract_text
         .as_deref()
         .and_then(|text| parse_deadline_utc(text, &year.timezone).ok());
-    Some(ConferenceFacts {
+    ConferenceFacts {
         id: conference_id(conf, ambiguous),
         title: conf.title.clone(),
         year: year.year,
@@ -282,7 +292,45 @@ fn build_facts(
         date: year.date.clone(),
         link: year.link.clone(),
         is_tbd,
-    })
+    }
+}
+
+/// Facts for one edition (`key` + `year`), open or not: the next open
+/// deadline of that year, else its latest past one. Used to show saved
+/// recommendations whose deadline has passed since.
+pub fn facts_for_edition(
+    conferences: &[Conference],
+    key: &str,
+    year: i32,
+    now: DateTime<Utc>,
+) -> Option<ConferenceFacts> {
+    let conf = find_conference(conferences, key)?;
+    let edition = conf.confs.iter().find(|c| c.year == year)?;
+    let dated: Vec<(&Timeline, DateTime<Utc>)> = edition
+        .timeline
+        .iter()
+        .filter_map(|t| {
+            parse_deadline_utc(&t.deadline, &edition.timezone)
+                .ok()
+                .map(|d| (t, d))
+        })
+        .collect();
+    let open = dated
+        .iter()
+        .filter(|(_, d)| *d > now)
+        .min_by_key(|(_, d)| *d);
+    let past = dated.iter().max_by_key(|(_, d)| *d);
+    let (timeline, deadline) = match open.or(past) {
+        Some((t, d)) => (Some(*t), Some(*d)),
+        None => (edition.timeline.first(), None),
+    };
+    Some(facts_from(
+        conf,
+        &ambiguous_titles(conferences),
+        edition,
+        timeline,
+        deadline,
+    ))
 }
 
 /// Facts for a conference key, if it still has an open deadline.

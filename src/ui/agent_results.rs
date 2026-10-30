@@ -11,8 +11,41 @@ pub const PANEL_MIN_WIDTH: u16 = 30;
 /// Columns moved by one `<` / `>` press.
 pub const PANEL_STEP: i32 = 4;
 
-/// Recommendation rounds kept for `[` / `]`.
-pub const ROUNDS_KEPT: usize = 5;
+/// How the recommendation cards are shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CardsView {
+    /// Two lines per card, details of the selected one with `d`.
+    #[default]
+    Expanded,
+    /// One line per card, two columns on wide panels.
+    Compact,
+    /// A single summary line.
+    Collapsed,
+}
+
+impl CardsView {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Expanded => "expanded",
+            Self::Compact => "compact",
+            Self::Collapsed => "collapsed",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        [Self::Expanded, Self::Compact, Self::Collapsed]
+            .into_iter()
+            .find(|v| v.key() == key)
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Expanded => Self::Compact,
+            Self::Compact => Self::Collapsed,
+            Self::Collapsed => Self::Expanded,
+        }
+    }
+}
 
 /// How much room the agent panel takes while it has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -25,15 +58,22 @@ pub enum PanelSize {
 }
 
 impl AgentPanel {
-    /// Show a new set and remember it, keeping the last [`ROUNDS_KEPT`].
+    /// Show a new set and save it as a round of the history, named after
+    /// the request that produced it.
     pub fn push_recommendations(&mut self, set: RecommendationSet) {
-        self.rounds.push(set.clone());
-        if self.rounds.len() > ROUNDS_KEPT {
-            self.rounds.remove(0);
-        }
-        self.round_cursor = self.rounds.len() - 1;
+        let name = self.last_prompt.clone();
+        let id = self.round_history.push(&name, set.clone());
+        self.save_history();
+        self.entries.push(super::agent::Entry::Round(id));
+        self.round_cursor = self.round_history.position(id).unwrap_or(0);
         self.recommendations = Some(set);
         self.card_cursor = 0;
+        self.turn_cards = true;
+        // A new round is meant to be seen: never arrive collapsed.
+        self.cards_view = match self.cards_view_pref {
+            CardsView::Collapsed => CardsView::Compact,
+            view => view,
+        };
     }
 }
 
@@ -94,9 +134,32 @@ impl App {
         }
     }
 
+    /// Ctrl+O, `z`, a click on the cards' title: expanded → compact →
+    /// collapsed. The choice is remembered.
+    pub fn cycle_cards_view(&mut self) {
+        let next = self.agent.cards_view.next();
+        self.agent.cards_view = next;
+        self.agent.cards_view_pref = next;
+        if next == CardsView::Collapsed && self.focus == Focus::AgentCards {
+            self.focus = Focus::Agent;
+        }
+        self.agent.save_session();
+    }
+
+    /// Move to the cards, unfolding them if they are collapsed.
+    pub fn focus_cards(&mut self) {
+        if !self.has_cards() {
+            return;
+        }
+        if self.agent.cards_view == CardsView::Collapsed {
+            self.agent.cards_view = CardsView::Compact;
+        }
+        self.focus = Focus::AgentCards;
+    }
+
     /// `[` / `]`: show an earlier or later round of recommendations.
     pub fn show_round(&mut self, delta: isize) {
-        let count = self.agent.rounds.len();
+        let count = self.agent.round_history.rounds.len();
         if count < 2 {
             return;
         }
@@ -104,10 +167,61 @@ impl App {
         if next == self.agent.round_cursor {
             return;
         }
-        self.agent.round_cursor = next;
-        self.agent.recommendations = Some(self.agent.rounds[next].clone());
-        self.agent.card_cursor = 0;
+        self.open_round_at(next);
+    }
+
+    /// Show history round `index` as the cards (unfolded), from `[ ]`, a
+    /// round marker in the transcript or the history list.
+    pub fn open_round_at(&mut self, index: usize) {
+        if index >= self.agent.round_history.rounds.len() {
+            return;
+        }
+        self.agent.show_saved_round(index);
+        if self.agent.cards_view == CardsView::Collapsed {
+            self.agent.cards_view = CardsView::Compact;
+        }
         self.recommendations_changed();
+    }
+
+    /// After rounds were deleted: keep showing the current round if it is
+    /// still there, else the newest one, else nothing.
+    pub fn after_history_change(&mut self) {
+        let shown = self
+            .agent
+            .recommendations
+            .as_ref()
+            .map(|set| set.generated_at);
+        let rounds = &self.agent.round_history.rounds;
+        let index = shown
+            .and_then(|at| rounds.iter().position(|r| r.set.generated_at == at))
+            .or_else(|| rounds.len().checked_sub(1));
+        match index {
+            Some(index) => self.agent.show_saved_round(index),
+            None => {
+                self.agent.recommendations = None;
+                self.agent.round_cursor = 0;
+                self.agent.card_cursor = 0;
+            }
+        }
+        self.recommendations_changed();
+        if self.agent.recommendations.is_none() && self.only_recommended {
+            self.only_recommended = false;
+            self.refresh_visible();
+        }
+    }
+
+    /// A click on a round marker.
+    pub fn open_round(&mut self, id: u64) {
+        match self.agent.round_history.position(id) {
+            Some(index) => self.open_round_at(index),
+            None => {
+                let lang = self.results_lang();
+                self.agent.info(lang.pick(
+                    "That round was deleted from the history.",
+                    "这一轮已从历史中删除。",
+                ));
+            }
+        }
     }
 
     /// `?` on a card: go to the input with a question about it.
@@ -216,11 +330,16 @@ impl App {
     /// Title for the cards header: `round 2/3 · 14:05` when several rounds
     /// are kept.
     pub fn round_label(&self) -> Option<String> {
-        let count = self.agent.rounds.len();
+        let count = self.agent.round_history.rounds.len();
         if count < 2 {
             return None;
         }
-        let set = self.agent.rounds.get(self.agent.round_cursor)?;
+        let set = &self
+            .agent
+            .round_history
+            .rounds
+            .get(self.agent.round_cursor)?
+            .set;
         let time = set
             .generated_at
             .with_timezone(&chrono::Local)
@@ -261,21 +380,24 @@ mod tests {
             app.poll_agent();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(app.agent.rounds.len(), 1);
+        assert_eq!(app.agent.round_history.rounds.len(), 1);
         (app, dir)
     }
 
     #[test]
     fn rounds_are_kept_and_browsed() {
-        let (mut app, _dir) = app_with_cards();
+        let (mut app, dir) = app_with_cards();
         assert_eq!(app.round_label(), None);
-        for i in 0..ROUNDS_KEPT + 1 {
+        app.agent.round_history.limit = 5;
+        for i in 0..6 {
             let next = set(&format!("round {i}"), &app);
             app.agent.push_recommendations(next);
         }
-        assert_eq!(app.agent.rounds.len(), ROUNDS_KEPT);
-        assert_eq!(app.agent.round_cursor, ROUNDS_KEPT - 1);
+        // The first round (from app_with_cards) and "round 0" fell off.
+        assert_eq!(app.agent.round_history.rounds.len(), 5);
+        assert_eq!(app.agent.round_cursor, 4);
         assert!(app.round_label().unwrap().starts_with("round 5/5"));
+        assert!(dir.path().join("agent-history.json").exists());
 
         app.agent.card_cursor = 1;
         app.show_round(-1);
@@ -294,6 +416,34 @@ mod tests {
     }
 
     #[test]
+    fn round_markers_open_their_round() {
+        let (mut app, _dir) = app_with_cards();
+        let first = app.agent.round_history.rounds[0].id;
+        let next = set("second", &app);
+        app.agent.push_recommendations(next);
+        let markers: Vec<u64> = app
+            .agent
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                crate::ui::agent::Entry::Round(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(markers.len(), 2);
+        app.agent.cards_view = CardsView::Collapsed;
+        app.open_round(first);
+        assert_eq!(app.agent.round_cursor, 0);
+        assert_eq!(app.agent.cards_view, CardsView::Compact);
+        app.agent.round_history.remove(first);
+        app.open_round(first);
+        assert!(matches!(
+            app.agent.entries.last(),
+            Some(crate::ui::agent::Entry::Info(t)) if t.contains("deleted")
+        ));
+    }
+
+    #[test]
     fn question_mark_prefills_a_follow_up() {
         let (mut app, _dir) = app_with_cards();
         app.focus = Focus::AgentCards;
@@ -302,7 +452,7 @@ mod tests {
         assert_eq!(app.focus, Focus::Agent);
         assert_eq!(app.agent.input, format!("Why {title} 2099?").as_str());
         // Offline, sending it is answered locally from the rules.
-        let cards_before = app.agent.rounds.len();
+        let cards_before = app.agent.round_history.rounds.len();
         app.submit_agent_input();
         assert!(!app.agent.is_busy());
         let answer = match app.agent.entries.last() {
@@ -311,7 +461,11 @@ mod tests {
         };
         assert!(answer.contains(&title), "{answer}");
         assert!(answer.contains("Why:"), "{answer}");
-        assert_eq!(app.agent.rounds.len(), cards_before, "no new cards");
+        assert_eq!(
+            app.agent.round_history.rounds.len(),
+            cards_before,
+            "no new cards"
+        );
     }
 
     #[test]
@@ -491,5 +645,26 @@ mod tests {
         app.agent.clipboard = Arc::new(|_: &str| Err(std::io::Error::other("no tty")));
         app.copy_card();
         assert!(last(&app).contains("no tty"));
+    }
+
+    #[test]
+    fn history_clear_keeps_pinned_rounds() {
+        let (mut app, _dir) = app_with_cards();
+        let pinned = app.agent.round_history.rounds[0].id;
+        app.agent.round_history.toggle_pin(pinned);
+        let mut second = set("second", &app);
+        second.generated_at += chrono::Duration::seconds(5);
+        app.agent.push_recommendations(second);
+        app.run_command("history clear");
+        assert_eq!(app.agent.round_history.rounds.len(), 1);
+        assert_eq!(app.agent.round_history.rounds[0].id, pinned);
+        // The deleted round was on screen: the pinned one is shown instead.
+        assert_eq!(
+            app.agent.recommendations.as_ref().unwrap().generated_at,
+            app.agent.round_history.rounds[0].set.generated_at
+        );
+        app.agent.round_history.toggle_pin(pinned);
+        app.run_command("history clear");
+        assert!(app.agent.recommendations.is_none());
     }
 }
