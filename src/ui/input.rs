@@ -370,6 +370,15 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         }
         return Outcome::Continue;
     }
+    if let Some(&(_, id)) = view
+        .layout
+        .agent_round_markers
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        app.open_round(id);
+        return Outcome::Continue;
+    }
     if view
         .layout
         .agent_cards_header
@@ -1138,7 +1147,7 @@ mod tests {
             app.poll_agent();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert_eq!(app.agent.rounds.len(), 2);
+        assert_eq!(app.agent.round_history.rounds.len(), 2);
         app.focus = Focus::AgentCards;
         press(&mut app, KeyCode::Char('['));
         assert_eq!(app.agent.round_cursor, 0);

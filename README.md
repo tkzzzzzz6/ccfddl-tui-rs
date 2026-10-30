@@ -444,12 +444,18 @@ recommendations.
 | `F2` / `Ctrl+\` | Panel size: half → full screen → hidden (`a` brings it back) |
 | `q` | Quit |
 
-The input history (last 100), the newest round of cards and the follow-up
-conditions are saved to `~/.ccfddl/agent-session.json` (owner-only on Unix)
-and restored the next time the panel opens. Only conference ids and the
-generated texts are stored: deadlines, ranks and places are rebuilt from the
-current data, and conferences that have closed since are dropped. API keys and
-the conversation are never saved; `/forget` deletes the file.
+Every round of recommendations is saved to `~/.ccfddl/agent-history.json`,
+named after the request that produced it; the newest 50 are kept
+(`history_limit: 100` at the top of `config.yaml` changes that) plus any
+pinned ones. `[` / `]` browse all of them, and each round leaves a marker in
+the conversation (`▸ round 3 · 8 picks · 14:05`) that shows it again when
+clicked. The input history (last 100), the follow-up conditions and the card
+view go to `~/.ccfddl/agent-session.json`. Both files are owner-only on Unix
+and hold conference ids and the generated texts only: deadlines, ranks and
+places are rebuilt from the current data, and conferences that have closed
+since stay in their round marked *closed*. API keys and the conversation are
+never saved. `/clear` clears the conversation only, `/history clear` deletes
+the unpinned rounds, `/forget` deletes both files.
 
 The cards take at most half of the panel and scroll inside it. A text answer
 (such as "why ICCV?") folds them to one summary line so the answer has room;

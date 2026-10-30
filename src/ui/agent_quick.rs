@@ -119,6 +119,7 @@ impl App {
     pub fn show_upcoming_a(&mut self) {
         let lang: Lang = self.language.into();
         let label = QuickAction::UpcomingA.label(self);
+        self.agent.last_prompt = label.clone();
         self.agent.entries.push(Entry::User(label));
         let profile = Profile {
             target_ranks: self.agent.profile.target_ranks.clone(),

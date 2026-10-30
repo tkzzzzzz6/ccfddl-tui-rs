@@ -118,9 +118,16 @@ pub(crate) fn tier_style(tier: Tier) -> Style {
     Style::new().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'static>> {
+/// Transcript lines, and which of them are round markers (line index,
+/// history id) so clicks can open the round.
+fn transcript_lines(
+    app: &App,
+    width: usize,
+    now: DateTime<Utc>,
+) -> (Vec<Line<'static>>, Vec<(usize, u64)>) {
     let lang: Lang = app.language.into();
     let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut markers: Vec<(usize, u64)> = Vec::new();
     for (index, entry) in app.agent.entries.iter().enumerate() {
         match entry {
             Entry::User(text) => {
@@ -173,6 +180,52 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
                 Style::new().fg(theme::ERROR),
                 width,
             ),
+            Entry::Round(id) => {
+                let history = &app.agent.round_history;
+                let Some(position) = history.position(*id) else {
+                    continue;
+                };
+                let round = &history.rounds[position];
+                let time = round
+                    .set
+                    .generated_at
+                    .with_timezone(&chrono::Local)
+                    .format("%H:%M");
+                let shown =
+                    app.agent.round_cursor == position && app.agent.recommendations.is_some();
+                let text = match lang {
+                    Lang::Zh => format!(
+                        "第 {} 轮 · {} 个推荐 · {time}{}",
+                        position + 1,
+                        round.set.items.len(),
+                        if shown {
+                            " · 正在显示"
+                        } else {
+                            " · 点击查看"
+                        }
+                    ),
+                    Lang::En => format!(
+                        "round {} · {} picks · {time}{}",
+                        position + 1,
+                        round.set.items.len(),
+                        if shown {
+                            " · on screen"
+                        } else {
+                            " · click to show"
+                        }
+                    ),
+                };
+                markers.push((lines.len(), *id));
+                lines.push(Line::from(vec![
+                    Span::styled("  ▸ ", theme::TITLE_STYLE),
+                    Span::styled(
+                        truncate(&text, width.saturating_sub(4)),
+                        Style::new()
+                            .fg(theme::ACCENT)
+                            .add_modifier(Modifier::UNDERLINED),
+                    ),
+                ]));
+            }
         }
     }
     if app.agent.is_busy() {
@@ -185,7 +238,7 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
             ),
         ]));
     }
-    lines
+    (lines, markers)
 }
 
 fn tool_label(name: &str, lang: Lang) -> String {
@@ -217,6 +270,13 @@ fn card_lines(
     let lang: Lang = app.language.into();
     let facts = &item.facts;
     let (countdown, countdown_style) = match facts.days_left(now) {
+        // A saved round can hold conferences that closed since.
+        _ if facts.deadline.is_some_and(|d| d <= now) => (
+            lang.pick("closed", "已截止").to_string(),
+            Style::new()
+                .fg(theme::HINT)
+                .add_modifier(Modifier::CROSSED_OUT),
+        ),
         Some(days) => (
             match lang {
                 Lang::Zh => format!("{days}天"),
@@ -494,11 +554,20 @@ pub fn render_agent(
     view.layout.agent_input = input_area;
 
     // --- Transcript -----------------------------------------------------
-    let lines = transcript_lines(app, width, now);
+    let (lines, markers) = transcript_lines(app, width, now);
     let height = transcript_area.height as usize;
     let max_scroll = lines.len().saturating_sub(height);
     app.agent.scroll = app.agent.scroll.min(max_scroll);
     let start = max_scroll - app.agent.scroll;
+    for (line, id) in markers {
+        if line >= start && line < start + height {
+            let y = transcript_area.y + (line - start) as u16;
+            view.layout.agent_round_markers.push((
+                Rect::new(transcript_area.x, y, transcript_area.width, 1),
+                id,
+            ));
+        }
+    }
     let visible: Vec<Line> = lines.into_iter().skip(start).take(height).collect();
     frame.render_widget(Paragraph::new(visible), transcript_area);
     if app.agent.scroll > 0 {

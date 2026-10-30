@@ -941,7 +941,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("y", tr(language, "Copy", "复制")),
                 ("s", tr(language, "Save as profile", "存为画像")),
             ];
-            if app.agent.rounds.len() > 1 {
+            if app.agent.round_history.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));
             }
             keys.extend([
