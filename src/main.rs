@@ -62,6 +62,15 @@ struct Cli {
     #[arg(long)]
     zh: bool,
 
+    /// Colours: auto (default), truecolor, 256, 16 or none. Also CCFDDL_COLOR;
+    /// NO_COLOR is honoured
+    #[arg(
+        long,
+        value_name = "MODE",
+        value_parser = ["auto", "truecolor", "256", "16", "none"]
+    )]
+    color: Option<String>,
+
     /// Connect a model interactively (provider, API key, model) and exit
     #[arg(long)]
     setup: bool,
@@ -226,11 +235,13 @@ fn main() -> Result<()> {
 
     // The interactive UI performs the initial load in the background so the
     // interface appears immediately and remains responsive during refreshes.
+    let colors = ui::color_mode::resolve(cli.color.as_deref(), &|key| std::env::var(key).ok())
+        .map_err(|error| anyhow::anyhow!(error))?;
     let agent = ui::agent::AgentPanel::new(profile_path, llm)
         .with_config_path(config_path)
         .with_overrides(overrides)
         .with_notice(llm_error);
-    ui::run(service, agent)?;
+    ui::run(service, agent, colors)?;
     Ok(())
 }
 

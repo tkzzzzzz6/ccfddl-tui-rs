@@ -149,6 +149,27 @@ instead of triggering their global shortcuts. The search field is pinned to the
 top of the sidebar; category filters can be collapsed, and rank filters are
 packed two per row to keep the sidebar compact.
 
+## Colours
+
+The theme uses 24-bit colours with at least 4.5:1 contrast for text. Each
+frame is converted to what the terminal can show:
+
+| Mode | Used when |
+|------|-----------|
+| `truecolor` | `COLORTERM` is `truecolor`/`24bit`, or the terminal is known to support it (iTerm2, WezTerm, kitty, Ghostty, VS Code, Windows Terminal) |
+| `256` | `TERM` contains `256color`, e.g. older macOS Terminal.app, many SSH / tmux setups |
+| `16` | anything else; colours are matched by hue (a soft red stays red) |
+| `none` | `NO_COLOR` is set (see [no-color.org](https://no-color.org)) or `TERM=dumb`; bold and reverse video remain |
+
+Override the detection with `--color auto|truecolor|256|16|none` or the
+`CCFDDL_COLOR` variable (the flag wins). Text keeps 4.5:1 contrast in 256
+colours too; a test checks every pair.
+
+```bash
+ccfddl-tui --color 256
+CCFDDL_COLOR=truecolor ccfddl-tui    # e.g. a truecolor terminal over SSH
+```
+
 ## Mouse
 
 Mouse capture is enabled on startup and disabled during terminal restoration.

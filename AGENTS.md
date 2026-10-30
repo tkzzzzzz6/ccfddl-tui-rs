@@ -12,6 +12,9 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
 - `src/ui/app.rs` owns application behavior and selection/filter state.
 - `src/ui/view.rs` owns persistent table/sidebar scrolling and mouse hit regions.
 - `src/ui/render.rs` renders the current frame and produces hit regions.
+- `src/ui/theme.rs` holds fixed RGB colours (text ≥ 4.5:1 contrast, checked by
+  tests); `src/ui/color_mode.rs` converts each finished frame for 256 / 16 /
+  no-colour terminals (`--color`, `CCFDDL_COLOR`, `NO_COLOR`, detection).
 - `src/ui/table_layout.rs` computes table column positions (custom widths,
   horizontal scrolling with frozen `★`/title columns) and reads/writes
   `~/.ccfddl/layout.yaml`; rendering and mouse handling both use it.
