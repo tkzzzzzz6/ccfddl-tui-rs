@@ -60,7 +60,7 @@ pub fn sub_color(sub: &str) -> Color {
         "SE" => Color::Rgb(0xaf, 0x87, 0x5f),
         "DB" => Color::Rgb(0x5f, 0xaf, 0x87),
         "CT" => Color::Rgb(0x9f, 0x7f, 0x9f),
-        "CG" => Color::Rgb(0xb7, 0x6f, 0xb7),
+        "CG" => Color::Rgb(0xc8, 0x6e, 0xc8),
         "AI" => Color::Rgb(0x5f, 0xaf, 0xaf),
         "HI" => Color::Rgb(0xaf, 0x87, 0x87),
         "MX" => Color::Rgb(0x8c, 0x8c, 0x65),
@@ -210,6 +210,42 @@ mod tests {
             let ratio = contrast(*fg, SELECTED_BG);
             assert!(ratio >= 3.0, "{fg:?} on the selection: {ratio:.2}");
         }
+    }
+
+    /// The colour a 256-colour terminal shows for `color`.
+    fn as_256(color: Color) -> Color {
+        let (r, g, b) = rgb(color);
+        let index = crate::ui::color_mode::rgb_to_256(r as u8, g as u8, b as u8);
+        let (r, g, b) = crate::ui::color_mode::index_rgb(index);
+        Color::Rgb(r, g, b)
+    }
+
+    #[test]
+    fn text_stays_readable_in_256_colour_terminals() {
+        let base = [TEXT, MUTED, HINT, ACCENT, PRIMARY, ERROR, WARNING, SUCCESS];
+        for fg in base {
+            for bg in BACKGROUNDS {
+                let ratio = contrast(as_256(fg), as_256(bg));
+                assert!(ratio >= 4.5, "{fg:?} on {bg:?} in 256 colours: {ratio:.2}");
+            }
+        }
+        for cat in crate::model::CATEGORIES {
+            let fg = sub_color(cat.sub);
+            for bg in [SURFACE, SURFACE_DARK] {
+                let ratio = contrast(as_256(fg), as_256(bg));
+                assert!(ratio >= 4.5, "{} in 256 colours: {ratio:.2}", cat.sub);
+            }
+        }
+        for fg in [TEXT, MUTED] {
+            let ratio = contrast(as_256(fg), as_256(SELECTED_BG));
+            assert!(
+                ratio >= 4.5,
+                "{fg:?} on the selection in 256 colours: {ratio:.2}"
+            );
+        }
+        // The selection stays distinguishable from the rows around it.
+        assert_ne!(as_256(SELECTED_BG), as_256(SURFACE));
+        assert_ne!(as_256(SELECTED_BG), as_256(SURFACE_DARK));
     }
 
     #[test]

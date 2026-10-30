@@ -970,6 +970,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         Focus::Agent if app.quick_actions_visible() => vec![
             ("1-4", tr(language, "Shortcut", "快捷入口")),
             ("⏎", tr(language, "Send", "发送")),
+            ("Ctrl+P", tr(language, "Profile", "画像")),
             ("/", tr(language, "Commands", "命令")),
             ("Tab", tr(language, "Table", "表格")),
             ("Esc", tr(language, "Close", "关闭")),
@@ -979,6 +980,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("↑↓", tr(language, "History", "历史")),
             ("/", tr(language, "Commands", "命令")),
             ("Tab", tr(language, "Cards / table", "卡片/表格")),
+            ("Ctrl+P", tr(language, "Profile", "画像")),
             ("PgUp/PgDn", tr(language, "Scroll", "滚动")),
             ("F2", tr(language, "Size", "尺寸")),
             ("Esc", tr(language, "Stop/Close", "中断/关闭")),

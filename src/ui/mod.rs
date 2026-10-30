@@ -15,6 +15,7 @@ pub mod agent_view;
 pub mod app;
 pub mod browser;
 pub mod clipboard;
+pub mod color_mode;
 pub mod input;
 pub mod line_input;
 pub mod profile_form;
@@ -93,12 +94,16 @@ impl Drop for BracketedPasteGuard {
 ///
 /// `agent` carries the research profile path and the resolved model
 /// settings (see `agent::config`).
-pub fn run(service: crate::data::DataService, agent: agent::AgentPanel) -> anyhow::Result<()> {
+pub fn run(
+    service: crate::data::DataService,
+    agent: agent::AgentPanel,
+    colors: color_mode::ColorMode,
+) -> anyhow::Result<()> {
     let mut terminal = ratatui::init();
     let result = match MouseCaptureGuard::enable() {
         Ok(_mouse) => {
             let _paste = BracketedPasteGuard::enable();
-            event_loop(&mut terminal, App::with_agent(service, agent))
+            event_loop(&mut terminal, App::with_agent(service, agent), colors)
         }
         Err(error) => Err(error.into()),
     };
@@ -106,7 +111,11 @@ pub fn run(service: crate::data::DataService, agent: agent::AgentPanel) -> anyho
     result
 }
 
-fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()> {
+fn event_loop(
+    terminal: &mut DefaultTerminal,
+    mut app: App,
+    colors: color_mode::ColorMode,
+) -> anyhow::Result<()> {
     let mut last_tick = Instant::now();
     let mut view = ViewState::new().with_layout_file(table_layout::default_layout_path());
     let mut refresh_receiver = None;
@@ -115,7 +124,10 @@ fn event_loop(terminal: &mut DefaultTerminal, mut app: App) -> anyhow::Result<()
     loop {
         poll_refresh(&mut app, &mut refresh_receiver);
         app.poll_agent();
-        terminal.draw(|frame| render::draw_with_view(frame, &mut app, &mut view, Utc::now()))?;
+        terminal.draw(|frame| {
+            render::draw_with_view(frame, &mut app, &mut view, Utc::now());
+            color_mode::apply(frame.buffer_mut(), colors, theme::SELECTED_BG);
+        })?;
 
         // A short timeout keeps the countdown ticking without busy-waiting;
         // refresh completion is polled more frequently while a worker is active.
