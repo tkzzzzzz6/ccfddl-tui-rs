@@ -26,6 +26,8 @@ pub struct SavedSession {
     pub input_history: Vec<String>,
     pub round: Option<RecommendationSet>,
     pub constraints: Constraints,
+    /// How the cards were last shown (`expanded`, `compact`, `collapsed`).
+    pub cards_view: Option<String>,
 }
 
 pub fn default_session_path() -> PathBuf {
@@ -205,6 +207,7 @@ pub fn save(path: &Path, session: &SavedSession) -> io::Result<()> {
         "input_history": session.input_history,
         "round": session.round.as_ref().map(round_to_json),
         "constraints": constraints_to_json(&session.constraints),
+        "cards_view": session.cards_view,
     });
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -277,6 +280,10 @@ pub fn load(
             input_history,
             round,
             constraints: constraints_from_json(root.get("constraints")),
+            cards_view: root
+                .get("cards_view")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         },
         kept,
         saved,
@@ -338,11 +345,13 @@ mod tests {
                 ready_date: NaiveDate::from_ymd_opt(2030, 1, 1),
                 ..Default::default()
             },
+            cards_view: Some("compact".into()),
         };
         save(&path, &session).unwrap();
         let restored = load(&path, &conferences(), now()).unwrap().unwrap();
         assert_eq!(restored.session.input_history, session.input_history);
         assert_eq!(restored.session.constraints, session.constraints);
+        assert_eq!(restored.session.cards_view.as_deref(), Some("compact"));
         assert_eq!(restored.kept, round.items.len());
         let back = restored.session.round.unwrap();
         assert_eq!(back.items, round.items);

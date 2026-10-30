@@ -14,6 +14,42 @@ pub const PANEL_STEP: i32 = 4;
 /// Recommendation rounds kept for `[` / `]`.
 pub const ROUNDS_KEPT: usize = 5;
 
+/// How the recommendation cards are shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CardsView {
+    /// Two lines per card, details of the selected one with `d`.
+    #[default]
+    Expanded,
+    /// One line per card, two columns on wide panels.
+    Compact,
+    /// A single summary line.
+    Collapsed,
+}
+
+impl CardsView {
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Expanded => "expanded",
+            Self::Compact => "compact",
+            Self::Collapsed => "collapsed",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        [Self::Expanded, Self::Compact, Self::Collapsed]
+            .into_iter()
+            .find(|v| v.key() == key)
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Expanded => Self::Compact,
+            Self::Compact => Self::Collapsed,
+            Self::Collapsed => Self::Expanded,
+        }
+    }
+}
+
 /// How much room the agent panel takes while it has focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PanelSize {
@@ -34,6 +70,12 @@ impl AgentPanel {
         self.round_cursor = self.rounds.len() - 1;
         self.recommendations = Some(set);
         self.card_cursor = 0;
+        self.turn_cards = true;
+        // A new round is meant to be seen: never arrive collapsed.
+        self.cards_view = match self.cards_view_pref {
+            CardsView::Collapsed => CardsView::Compact,
+            view => view,
+        };
     }
 }
 
@@ -92,6 +134,29 @@ impl App {
             }
             _ => self.selected = 0,
         }
+    }
+
+    /// Ctrl+O, `z`, a click on the cards' title: expanded → compact →
+    /// collapsed. The choice is remembered.
+    pub fn cycle_cards_view(&mut self) {
+        let next = self.agent.cards_view.next();
+        self.agent.cards_view = next;
+        self.agent.cards_view_pref = next;
+        if next == CardsView::Collapsed && self.focus == Focus::AgentCards {
+            self.focus = Focus::Agent;
+        }
+        self.agent.save_session();
+    }
+
+    /// Move to the cards, unfolding them if they are collapsed.
+    pub fn focus_cards(&mut self) {
+        if !self.has_cards() {
+            return;
+        }
+        if self.agent.cards_view == CardsView::Collapsed {
+            self.agent.cards_view = CardsView::Compact;
+        }
+        self.focus = Focus::AgentCards;
     }
 
     /// `[` / `]`: show an earlier or later round of recommendations.

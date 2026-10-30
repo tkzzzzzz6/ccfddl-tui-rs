@@ -150,6 +150,7 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::PageDown => app.scroll_transcript(-AGENT_PAGE),
         KeyCode::Char('l') if ctrl => app.toggle_language(),
         KeyCode::Char('p') if ctrl => app.open_profile_form(),
+        KeyCode::Char('o') if ctrl => app.cycle_cards_view(),
         KeyCode::F(3) => app.open_profile_form(),
         _ if is_panel_size_key(&key) => app.cycle_panel_size(),
         KeyCode::Char(c @ '1'..='4') if !ctrl && app.quick_actions_visible() => {
@@ -191,6 +192,7 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('?') => app.ask_about_card(),
         KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('y') => app.copy_card(),
+        KeyCode::Char('z') => app.cycle_cards_view(),
         KeyCode::Char('s') => app.save_conditions_as_profile(),
         // `p`, Ctrl+P (same key code) and F3, as in the input.
         KeyCode::Char('p') | KeyCode::F(3) => app.open_profile_form(),
@@ -364,8 +366,16 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
             view.sync_table(app);
         } else {
             app.agent.card_cursor = index;
-            app.focus = Focus::AgentCards;
+            app.focus_cards();
         }
+        return Outcome::Continue;
+    }
+    if view
+        .layout
+        .agent_cards_header
+        .is_some_and(|header| header.contains(point))
+    {
+        app.cycle_cards_view();
         return Outcome::Continue;
     }
     if let Some(&(_, index)) = view
@@ -379,11 +389,11 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
         return Outcome::Continue;
     }
     if view.layout.agent.is_some_and(|area| area.contains(point)) {
-        app.focus = if view.layout.agent_cards_area.contains(point) && app.has_cards() {
-            Focus::AgentCards
+        if view.layout.agent_cards_area.contains(point) && app.has_cards() {
+            app.focus_cards();
         } else {
-            Focus::Agent
-        };
+            app.focus = Focus::Agent;
+        }
         return Outcome::Continue;
     }
 

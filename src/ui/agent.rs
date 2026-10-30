@@ -26,7 +26,7 @@ use crate::agent::{Lang, Recommendation};
 use crate::data::ConferenceRow;
 
 use super::agent_input::SLASH_COMMANDS;
-use super::agent_results::PanelSize;
+use super::agent_results::{CardsView, PanelSize};
 use super::agent_setup::{SetupEvent, SetupWizard};
 use super::app::{App, Focus, Language};
 use super::browser;
@@ -90,6 +90,11 @@ pub struct AgentPanel {
     /// Which round `recommendations` shows.
     pub round_cursor: usize,
     pub panel_size: PanelSize,
+    /// How the cards are shown now, and the user's last choice.
+    pub cards_view: CardsView,
+    pub cards_view_pref: CardsView,
+    /// The running turn produced cards (otherwise its text answer gets room).
+    pub turn_cards: bool,
     /// Offline follow-up conditions accumulated over turns (`/reset`).
     pub constraints: Constraints,
     /// Width chosen by dragging the divider or with `<` / `>`.
@@ -160,6 +165,9 @@ impl AgentPanel {
             round_cursor: 0,
             panel_size: PanelSize::Half,
             constraints: Constraints::default(),
+            cards_view: CardsView::default(),
+            cards_view_pref: CardsView::default(),
+            turn_cards: false,
             session_path,
             session_loaded: false,
             panel_width: None,
@@ -276,6 +284,7 @@ impl AgentPanel {
                 input_history: self.input_history.clone(),
                 round: self.rounds.last().cloned(),
                 constraints: self.constraints.clone(),
+                cards_view: Some(self.cards_view_pref.key().to_string()),
             },
         );
     }
@@ -295,9 +304,14 @@ impl AgentPanel {
                     input_history,
                     round,
                     constraints,
+                    cards_view,
                 } = restored.session;
                 self.input_history = input_history;
                 self.constraints = constraints;
+                if let Some(view) = cards_view.as_deref().and_then(CardsView::from_key) {
+                    self.cards_view_pref = view;
+                    self.cards_view = view;
+                }
                 if let Some(round) = round {
                     self.push_recommendations(round);
                 }
@@ -416,11 +430,11 @@ impl App {
 
     /// Tab from the input: the cards when there are any, else the table.
     pub fn focus_next_from_input(&mut self) {
-        self.focus = if self.has_cards() {
-            Focus::AgentCards
+        if self.has_cards() {
+            self.focus_cards();
         } else {
-            Focus::Table
-        };
+            self.focus = Focus::Table;
+        }
     }
 
     pub fn focus_agent_input(&mut self) {
@@ -498,6 +512,9 @@ impl App {
             );
             if let Some(answer) = answer {
                 self.agent.entries.push(Entry::Assistant(answer));
+                if self.has_cards() {
+                    self.agent.cards_view = CardsView::Collapsed;
+                }
                 return;
             }
         }
@@ -527,6 +544,7 @@ impl App {
             .llm
             .as_ref()
             .map(|config| (self.agent.client_factory)(config));
+        self.agent.turn_cards = false;
         self.agent.handle = Some(worker::spawn(AgentJob {
             ctx,
             history: self.agent.history.clone(),
@@ -609,6 +627,10 @@ impl App {
                     panel.history = history;
                 }
                 panel.handle = None;
+                // A text-only answer gets the room the cards were using.
+                if !panel.turn_cards && panel.recommendations.is_some() {
+                    panel.cards_view = CardsView::Collapsed;
+                }
                 panel.save_session();
             }
             AgentEvent::Failed(error) => {
@@ -876,8 +898,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Ctrl+O fold the cards · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · z fold · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Ctrl+O 收放卡片 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · z 收放 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }
