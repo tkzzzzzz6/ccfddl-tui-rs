@@ -101,6 +101,99 @@ fn int_or(value: Option<&Value>, default: i64) -> i64 {
     }
 }
 
+/// Dates as people type them: `2027-03-01`, `2027/3/1`, `2027.3.1`,
+/// `2027年3月1日`, `3月1日` / `3/1` (the next such day), `3个月后`, `2周后`,
+/// `10天后`, `in 3 months`, `next month`. `today` anchors relative dates.
+pub fn parse_flexible_date(text: &str, today: NaiveDate) -> Option<NaiveDate> {
+    use chrono::{Datelike, Months};
+    let text = text.trim().to_lowercase();
+    if text.is_empty() {
+        return None;
+    }
+    for format in [
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%Y.%m.%d",
+        "%Y年%m月%d日",
+        "%Y年%m月%d号",
+    ] {
+        if let Ok(date) = NaiveDate::parse_from_str(&text, format) {
+            return Some(date);
+        }
+    }
+    let number = |s: &str| -> Option<u32> {
+        let s = s.trim();
+        s.parse().ok().or(match s {
+            "一" => Some(1),
+            "两" | "二" => Some(2),
+            "三" => Some(3),
+            "四" => Some(4),
+            "五" => Some(5),
+            "六" => Some(6),
+            "七" => Some(7),
+            "八" => Some(8),
+            "九" => Some(9),
+            "十" => Some(10),
+            "半" => Some(0),
+            _ => None,
+        })
+    };
+    let relative = |n: u32, unit: &str| -> Option<NaiveDate> {
+        match unit {
+            "month" => today.checked_add_months(Months::new(n)),
+            "week" => today.checked_add_days(chrono::Days::new(u64::from(n) * 7)),
+            _ => today.checked_add_days(chrono::Days::new(u64::from(n))),
+        }
+    };
+    if text == "半年后" || text == "in half a year" {
+        return relative(6, "month");
+    }
+    if text == "next month" || text == "下个月" {
+        return relative(1, "month");
+    }
+    for (suffix, unit) in [
+        ("个月后", "month"),
+        ("月后", "month"),
+        ("周后", "week"),
+        ("星期后", "week"),
+        ("天后", "day"),
+    ] {
+        if let Some(n) = text.strip_suffix(suffix).and_then(number) {
+            return relative(n, unit);
+        }
+    }
+    if let Some(rest) = text.strip_prefix("in ") {
+        let mut parts = rest.split_whitespace();
+        if let (Some(n), Some(unit)) = (parts.next().and_then(number), parts.next()) {
+            let unit = unit.trim_end_matches('s');
+            if ["month", "week", "day"].contains(&unit) {
+                return relative(n, unit);
+            }
+        }
+    }
+    // Month and day only: the next time that day comes round.
+    let month_day = text
+        .strip_suffix('日')
+        .or_else(|| text.strip_suffix('号'))
+        .and_then(|s| s.split_once('月'))
+        .or_else(|| {
+            text.split_once('/')
+                .filter(|(m, d)| m.len() <= 2 && d.len() <= 2)
+        });
+    if let Some((m, d)) = month_day
+        && let (Some(m), Some(d)) = (number(m), number(d))
+    {
+        for year in [today.year(), today.year() + 1] {
+            if let Some(date) = NaiveDate::from_ymd_opt(year, m, d)
+                && date >= today
+            {
+                return Some(date);
+            }
+        }
+    }
+    None
+}
+
 pub fn parse_date(text: &str) -> Option<NaiveDate> {
     let text = text.trim();
     NaiveDate::parse_from_str(text, "%Y-%m-%d")
@@ -295,6 +388,31 @@ fn yaml_string(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn flexible_dates() {
+        let today = NaiveDate::from_ymd_opt(2026, 10, 29).unwrap();
+        let d = |y, m, d| NaiveDate::from_ymd_opt(y, m, d);
+        let parse = |t: &str| parse_flexible_date(t, today);
+        assert_eq!(parse("2027-03-01"), d(2027, 3, 1));
+        assert_eq!(parse("2027/3/1"), d(2027, 3, 1));
+        assert_eq!(parse("2027.3.1"), d(2027, 3, 1));
+        assert_eq!(parse("2027年3月1日"), d(2027, 3, 1));
+        assert_eq!(parse("3月1日"), d(2027, 3, 1));
+        assert_eq!(parse("12月1号"), d(2026, 12, 1));
+        assert_eq!(parse("11/15"), d(2026, 11, 15));
+        assert_eq!(parse("3个月后"), d(2027, 1, 29));
+        assert_eq!(parse("三个月后"), d(2027, 1, 29));
+        assert_eq!(parse("半年后"), d(2027, 4, 29));
+        assert_eq!(parse("2周后"), d(2026, 11, 12));
+        assert_eq!(parse("10天后"), d(2026, 11, 8));
+        assert_eq!(parse("in 3 months"), d(2027, 1, 29));
+        assert_eq!(parse("in 1 week"), d(2026, 11, 5));
+        assert_eq!(parse("next month"), d(2026, 11, 29));
+        assert_eq!(parse("2027-13-01"), None);
+        assert_eq!(parse("soon"), None);
+        assert_eq!(parse(""), None);
+    }
 
     #[test]
     fn parses_a_full_profile() {

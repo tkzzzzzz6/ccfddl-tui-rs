@@ -7,6 +7,7 @@
 
 pub mod agent;
 pub mod agent_input;
+pub mod agent_profile;
 pub mod agent_quick;
 pub mod agent_results;
 pub mod agent_setup;
@@ -16,6 +17,8 @@ pub mod browser;
 pub mod clipboard;
 pub mod input;
 pub mod line_input;
+pub mod profile_form;
+pub mod profile_form_view;
 pub mod refresh;
 pub mod render;
 pub mod table_layout;

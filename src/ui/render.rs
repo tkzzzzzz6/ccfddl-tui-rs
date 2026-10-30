@@ -410,7 +410,7 @@ fn render_sidebar(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect
     let border = if matches!(app.focus, Focus::Sidebar | Focus::Search) {
         Style::new().fg(theme::PRIMARY)
     } else {
-        theme::DIM
+        theme::BORDER_STYLE
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -485,7 +485,7 @@ fn render_sidebar(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(theme::ACCENT)
-                .track_style(theme::DIM),
+                .track_style(theme::BORDER_STYLE),
             list_area,
             &mut state,
         );
@@ -634,7 +634,7 @@ fn render_table(
         .border_style(if app.focus == Focus::Table {
             Style::new().fg(theme::PRIMARY)
         } else {
-            theme::DIM
+            theme::BORDER_STYLE
         })
         .title(Span::styled(format!(" {title} "), theme::TITLE_STYLE));
     let inner = block.inner(area);
@@ -744,7 +744,7 @@ fn render_table(
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .thumb_style(theme::ACCENT)
-                .track_style(theme::DIM),
+                .track_style(theme::BORDER_STYLE),
             rows_area,
             &mut state,
         );
@@ -773,7 +773,7 @@ fn render_table(
         frame.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::HorizontalBottom)
                 .thumb_style(theme::ACCENT)
-                .track_style(theme::DIM),
+                .track_style(theme::BORDER_STYLE),
             bar,
             &mut state,
         );
@@ -819,7 +819,7 @@ fn render_details(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme::DIM)
+        .border_style(theme::BORDER_STYLE)
         .title(Span::styled(
             format!(" {} ", tr(app.language, "Details", "详情")),
             theme::TITLE_STYLE,
@@ -938,6 +938,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("?", tr(language, "Ask", "追问")),
                 ("v", tr(language, "Only these", "只看推荐")),
                 ("y", tr(language, "Copy", "复制")),
+                ("s", tr(language, "Save as profile", "存为画像")),
             ];
             if app.agent.rounds.len() > 1 {
                 keys.push(("[ ]", tr(language, "Rounds", "轮次")));
@@ -955,7 +956,14 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("⏎", tr(language, "Send", "发送")),
             ("Esc", tr(language, "Close list", "关闭列表")),
         ],
-        Focus::Agent if app.agent.setup.is_some() || app.agent.wizard.is_some() => vec![
+        Focus::Agent if app.agent.form.is_some() => vec![
+            ("↑↓", tr(language, "Field", "字段")),
+            ("←→", tr(language, "Choose", "选择")),
+            ("Space", tr(language, "Toggle", "勾选")),
+            ("Ctrl+S", tr(language, "Save", "保存")),
+            ("Esc", tr(language, "Cancel", "取消")),
+        ],
+        Focus::Agent if app.agent.setup.is_some() => vec![
             ("⏎", tr(language, "Answer", "回答")),
             ("Esc", tr(language, "Cancel", "取消")),
         ],
@@ -1104,7 +1112,7 @@ fn render_help(frame: &mut Frame, app: &App, view: &mut ViewState, area: Rect) {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(theme::DIM)
+                    .border_style(theme::BORDER_STYLE)
                     .style(theme::BASE.bg(theme::SURFACE))
                     .title(Span::styled(
                         tr(language, " Help ", " 帮助 "),

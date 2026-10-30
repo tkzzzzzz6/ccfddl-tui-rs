@@ -50,6 +50,10 @@ pub struct LayoutMap {
     pub agent_completions: Vec<(Rect, usize)>,
     /// First-screen shortcuts, by index.
     pub agent_quick: Vec<(Rect, usize)>,
+    /// The profile line at the top of the agent panel.
+    pub agent_profile_line: Option<Rect>,
+    /// Profile form: a field label or value, and a choice within it.
+    pub agent_form: Vec<(Rect, super::profile_form::Field, Option<usize>)>,
 }
 
 /// A mouse drag in progress.

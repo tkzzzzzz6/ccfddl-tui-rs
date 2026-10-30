@@ -130,9 +130,7 @@ fn transcript_lines(app: &App, width: usize, now: DateTime<Utc>) -> Vec<Line<'st
                     &mut lines,
                     Span::styled("› ", theme::TITLE_STYLE),
                     text,
-                    Style::new()
-                        .fg(ratatui::style::Color::White)
-                        .add_modifier(Modifier::BOLD),
+                    theme::SEARCH_STYLE.add_modifier(Modifier::BOLD),
                     width,
                 );
             }
@@ -360,7 +358,7 @@ pub fn render_agent(
         .border_style(if panel_focused {
             Style::new().fg(theme::PRIMARY)
         } else {
-            theme::DIM
+            theme::BORDER_STYLE
         })
         .title(Span::styled(
             format!(" Agent · {} ", app.agent.model_label()),
@@ -374,6 +372,10 @@ pub fn render_agent(
         return;
     }
     let width = inner.width as usize;
+    if app.agent.form.is_some() {
+        super::profile_form_view::render_form(frame, app, view, inner);
+        return;
+    }
 
     // Cards first, so the transcript gets whatever is left.
     let items = app
@@ -412,7 +414,14 @@ pub fn render_agent(
     } else {
         0
     };
-    let [transcript_area, quick_area, cards_area, input_area] = Layout::vertical([
+    let [
+        status_area,
+        transcript_area,
+        quick_area,
+        cards_area,
+        input_area,
+    ] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(quick_height),
         Constraint::Length(cards_height),
@@ -422,6 +431,23 @@ pub fn render_agent(
     if quick_height > 0 {
         render_quick_actions(frame, app, view, quick_area, lang);
     }
+    // The profile in one line; click (or p on the cards) to edit it.
+    let (status_text, has_profile) = app.profile_status();
+    let status_style = if has_profile {
+        Style::new().fg(theme::MUTED)
+    } else {
+        Style::new().fg(theme::WARNING)
+    };
+    let edit = lang.pick("  ✎ edit", "  ✎ 编辑");
+    let text = truncate(&status_text, width.saturating_sub(text_width(edit)));
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(text, status_style),
+            Span::styled(edit, theme::TITLE_STYLE),
+        ])),
+        status_area,
+    );
+    view.layout.agent_profile_line = Some(status_area);
     view.layout.agent_transcript = transcript_area;
     view.layout.agent_cards_area = cards_area;
     view.layout.agent_input = input_area;
@@ -532,13 +558,12 @@ pub fn render_agent(
         .border_style(if focused {
             Style::new().fg(theme::PRIMARY)
         } else {
-            theme::DIM
+            theme::BORDER_STYLE
         })
         .title(Span::styled(
-            match (&app.agent.setup, &app.agent.wizard) {
-                (Some(setup), _) => setup.title(),
-                (None, Some(wizard)) => format!(" /init {}/5 ", wizard.step.index() + 1),
-                (None, None) => String::new(),
+            match &app.agent.setup {
+                Some(setup) => setup.title(),
+                None => String::new(),
             },
             theme::TITLE_STYLE,
         ));
@@ -551,7 +576,7 @@ pub fn render_agent(
     let (line, cursor_x) = if app.agent.input.is_empty() {
         let placeholder = if app.agent.input_masked() {
             lang.pick("Paste the key (hidden)", "粘贴 Key（输入会被隐藏）")
-        } else if app.agent.wizard.is_some() || app.agent.setup.is_some() {
+        } else if app.agent.setup.is_some() {
             lang.pick("Answer the question above", "回答上面的问题")
         } else if focused {
             lang.pick(
@@ -870,7 +895,10 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             },
         );
-        assert!(app.agent.wizard.is_some(), "clicking 3 starts /init");
+        assert!(
+            app.agent.form.is_some(),
+            "clicking 3 opens the profile form"
+        );
         let (_, view) = draw_app(&mut app, 140, 30);
         assert!(view.layout.agent_quick.is_empty());
     }
