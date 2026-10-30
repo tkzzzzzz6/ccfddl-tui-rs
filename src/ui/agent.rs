@@ -128,6 +128,8 @@ pub struct AgentPanel {
     pub client_factory: ClientFactory,
     /// The research-profile form (`/init`, `/profile`, `p`).
     pub form: Option<ProfileForm>,
+    /// The `/history` list, when open.
+    pub history_list: Option<super::history_list::HistoryList>,
     /// Cached preview of the form's draft.
     pub form_preview: Option<(Profile, super::agent_profile::Preview)>,
     /// `/setup` questionnaire for the model connection.
@@ -195,6 +197,7 @@ impl AgentPanel {
             client_factory: Box::new(|config| Box::new(OpenAiClient::new(config.clone()))),
             form: None,
             form_preview: None,
+            history_list: None,
             setup: None,
             setup_rx: None,
             last_models: Vec::new(),
@@ -544,6 +547,8 @@ impl App {
             self.cancel_setup();
         } else if self.agent.form.is_some() {
             self.cancel_profile_form();
+        } else if self.agent.history_list.is_some() {
+            self.agent.history_list = None;
         } else if !self.agent.input.is_empty() {
             self.agent.input.clear();
         } else {
@@ -870,6 +875,10 @@ impl App {
                     "已删除保存的会话：输入历史、推荐历史和追问条件。",
                 ));
             }
+            "history" if arg.is_empty() => {
+                self.agent.entries.pop();
+                self.open_history();
+            }
             "history" if arg.eq_ignore_ascii_case("clear") => {
                 let removed = self.agent.round_history.clear_unpinned();
                 self.agent.save_history();
@@ -984,8 +993,8 @@ pub fn command_help(lang: Lang) -> String {
         ));
     }
     text.push_str(lang.pick(
-        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Ctrl+O fold the cards · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · z fold · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
-        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Ctrl+O 收放卡片 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · z 收放 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
+        "\nInput: Enter send · ↑↓ history · / commands (Tab completes) · ←→ Home End move · Ctrl+W delete word · Ctrl+U clear · PgUp/PgDn scroll · Tab cards/table · Ctrl+P or F3 profile · Ctrl+O fold the cards · Esc stop/close\nCards: j/k move · Enter show in table · f favorite · o open link · d details · ? ask about it · v table shows only these · z fold · h saved rounds · y copy as Markdown · s save the conditions as the profile · p edit the profile · < > panel width · [ ] earlier rounds · i or Esc back to input · Tab table\nF2 or Ctrl+\\ panel size · A in the table asks about a conference",
+        "\n输入区：Enter 发送 · ↑↓ 历史 · / 命令（Tab 补全）· ←→ Home End 移动光标 · Ctrl+W 删除一个词 · Ctrl+U 清空 · PgUp/PgDn 滚动 · Tab 卡片/表格 · Ctrl+P 或 F3 画像 · Ctrl+O 收放卡片 · Esc 中断/关闭\n卡片区：j/k 移动 · Enter 跳到表格 · f 收藏 · o 打开官网 · d 详情 · ? 追问 · v 表格只看推荐 · z 收放 · h 推荐历史 · y 复制为 Markdown · s 把条件存为画像 · p 编辑画像 · < > 调整面板宽度 · [ ] 历史轮次 · i 或 Esc 回到输入 · Tab 表格\nF2 或 Ctrl+\\ 切换面板尺寸 · 在表格中按 A 让助手评估当前会议",
     ));
     text
 }

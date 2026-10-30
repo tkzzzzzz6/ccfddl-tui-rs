@@ -50,6 +50,8 @@ pub struct LayoutMap {
     pub agent_completions: Vec<(Rect, usize)>,
     /// First-screen shortcuts, by index.
     pub agent_quick: Vec<(Rect, usize)>,
+    /// Rows of the `/history` list, by position in the list.
+    pub agent_history_rows: Vec<(Rect, usize)>,
     /// Round markers in the transcript, by history id.
     pub agent_round_markers: Vec<(Rect, u64)>,
     /// Title line of the cards (click: fold / unfold).

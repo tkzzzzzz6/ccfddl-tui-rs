@@ -6,6 +6,7 @@
 //! the Python implementation and is verified against it by `tests/golden.rs`.
 
 pub mod agent;
+pub mod agent_history;
 pub mod agent_input;
 pub mod agent_profile;
 pub mod agent_quick;
@@ -16,6 +17,8 @@ pub mod app;
 pub mod browser;
 pub mod clipboard;
 pub mod color_mode;
+pub mod history_list;
+pub mod history_list_view;
 pub mod input;
 pub mod line_input;
 pub mod profile_form;

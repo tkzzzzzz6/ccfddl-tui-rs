@@ -133,6 +133,10 @@ fn agent_key(app: &mut App, key: KeyEvent) -> Outcome {
         app.profile_form_key(key);
         return Outcome::Continue;
     }
+    if app.agent.history_list.is_some() {
+        app.history_list_key(key);
+        return Outcome::Continue;
+    }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let popup = app.agent.completion_visible();
     match key.code {
@@ -193,6 +197,7 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
         KeyCode::Char('v') => app.toggle_only_recommended(),
         KeyCode::Char('y') => app.copy_card(),
         KeyCode::Char('z') => app.cycle_cards_view(),
+        KeyCode::Char('h') => app.open_history(),
         KeyCode::Char('s') => app.save_conditions_as_profile(),
         // `p`, Ctrl+P (same key code) and F3, as in the input.
         KeyCode::Char('p') | KeyCode::F(3) => app.open_profile_form(),
@@ -220,6 +225,16 @@ fn agent_cards_key(app: &mut App, key: KeyEvent) -> Outcome {
 /// A bracketed paste: inserted at the cursor, never submitted.
 pub fn handle_paste(app: &mut App, text: &str) -> Outcome {
     match app.focus {
+        Focus::Agent if app.agent.history_list.is_some() => {
+            if let Some(list) = app.agent.history_list.as_mut() {
+                let line = text.replace(['\r', '\n'], " ");
+                if let Some(name) = list.renaming.as_mut() {
+                    name.insert_str(&line);
+                } else if list.filtering {
+                    list.filter.insert_str(&line);
+                }
+            }
+        }
         Focus::Agent => match app.agent.form.as_mut() {
             Some(form) => form.paste(text),
             None => {
@@ -368,6 +383,19 @@ pub fn handle_mouse(app: &mut App, view: &mut ViewState, mouse: MouseEvent) -> O
             app.agent.card_cursor = index;
             app.focus_cards();
         }
+        return Outcome::Continue;
+    }
+    if let Some(&(_, position)) = view
+        .layout
+        .agent_history_rows
+        .iter()
+        .find(|(area, _)| area.contains(point))
+    {
+        app.click_history_row(position);
+        return Outcome::Continue;
+    }
+    if app.agent.history_list.is_some() && view.layout.agent.is_some_and(|a| a.contains(point)) {
+        app.focus = Focus::Agent;
         return Outcome::Continue;
     }
     if let Some(&(_, id)) = view

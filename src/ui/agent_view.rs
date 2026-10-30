@@ -437,6 +437,10 @@ pub fn render_agent(
         super::profile_form_view::render_form(frame, app, view, inner);
         return;
     }
+    if app.agent.history_list.is_some() {
+        super::history_list_view::render_history(frame, app, view, inner);
+        return;
+    }
 
     // Cards first, so the transcript gets whatever is left.
     let items = app

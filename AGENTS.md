@@ -39,7 +39,8 @@ existing ratatui/crossterm architecture and the Python-compatible data layer.
   failed to parse. Tests inject the environment, model list and client.
 - `src/ui/profile_form.rs` (logic), `src/ui/profile_form_view.rs` (drawing)
   and `src/ui/agent_profile.rs` (open / save / preview) implement the
-  research-profile form behind `/init` and `/profile`.
+  research-profile form behind `/init` and `/profile`; `history_list.rs`,
+  `history_list_view.rs` and `agent_history.rs` do the same for `/history`.
 - `src/ui/agent.rs` owns agent panel behaviour and slash commands,
   `src/ui/agent_setup.rs` the `/setup`, `/model` and `/config` commands;
   `src/ui/agent_view.rs` draws it. Facts shown on cards come from the data

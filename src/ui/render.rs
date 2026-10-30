@@ -957,6 +957,17 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ("⏎", tr(language, "Send", "发送")),
             ("Esc", tr(language, "Close list", "关闭列表")),
         ],
+        Focus::Agent if app.agent.history_list.is_some() => vec![
+            ("↑↓", tr(language, "Select", "选择")),
+            ("⏎", tr(language, "Open", "打开")),
+            ("p", tr(language, "Pin", "置顶")),
+            ("r", tr(language, "Rename", "改名")),
+            ("d d", tr(language, "Delete", "删除")),
+            ("e", tr(language, "Export", "导出")),
+            ("/", tr(language, "Filter", "筛选")),
+            ("c", tr(language, "Compare", "对比")),
+            ("Esc", tr(language, "Back", "返回")),
+        ],
         Focus::Agent if app.agent.form.is_some() => vec![
             ("↑↓", tr(language, "Field", "字段")),
             ("←→", tr(language, "Choose", "选择")),
